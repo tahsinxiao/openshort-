@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Download, Share2, Instagram, Youtube, Video, AlertCircle, Loader2, Copy, Check, Wand2, Type, Calendar, Languages, FileText, Link2 } from 'lucide-react';
+import { Download, Share2, Instagram, Youtube, Video, AlertCircle, Loader2, Copy, Check, Wand2, Type, Calendar, Languages, FileText, Link2, Megaphone } from 'lucide-react';
 import { getApiUrl } from '../config';
 import { apiFetch } from '../lib/api';
 import SubtitleModal from './SubtitleModal';
+import PublishKitModal from './PublishKitModal';
 import HookModal from './HookModal';
 import TranslateModal from './TranslateModal';
 import Modal from './ui/Modal';
@@ -29,6 +30,7 @@ export default function ResultCard({ clip, index, jobId, durableUrl, uploadPostK
     const [showModal, setShowModal] = useState(false);
     const [showDescModal, setShowDescModal] = useState(false);
     const [showSubtitleModal, setShowSubtitleModal] = useState(false);
+    const [showPublishKit, setShowPublishKit] = useState(false);
     const [showWatermarkModal, setShowWatermarkModal] = useState(false);
     const { plan } = useAuth();
     const videoRef = React.useRef(null);
@@ -746,6 +748,13 @@ export default function ResultCard({ clip, index, jobId, durableUrl, uploadPostK
                     </button>
 
                     <button
+                        onClick={() => setShowPublishKit(true)}
+                        className={QUIET_BTN}
+                        title="Generate viral title, description and trending hashtags — you post manually"
+                    >
+                        <Megaphone size={16} className="text-muted group-hover:text-brass transition-colors shrink-0" /> publish kit
+                    </button>
+                    <button
                         onClick={() => setShowModal(true)}
                         className="btn-primary flex-col gap-1 py-2 px-1 text-[11px] rounded-input whitespace-nowrap"
                     >
@@ -938,8 +947,17 @@ export default function ResultCard({ clip, index, jobId, durableUrl, uploadPostK
                             {postResult.msg}
                         </div>
                     )}
+
                 </div>
             </Modal>
+
+            <PublishKitModal
+                isOpen={showPublishKit}
+                onClose={() => setShowPublishKit(false)}
+                jobId={jobId}
+                clipIndex={index}
+                clip={clip}
+            />
 
             <SubtitleModal
                 isOpen={showSubtitleModal}

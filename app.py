@@ -14,7 +14,7 @@ import itertools
 import asyncio
 from datetime import datetime, timezone
 from dotenv import load_dotenv
-from typing import Dict, Optional, List
+from typing import Any, Dict, Optional, List
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from starlette.background import BackgroundTask
 from pydantic import BaseModel
+import ai_gateway
 from s3_uploader import upload_job_artifacts, list_all_clips, upload_actor_to_s3, list_actor_gallery, upload_video_to_gallery, list_video_gallery
 
 load_dotenv()
@@ -35,7 +36,9 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # Configuration
 # Default to 1 if not set, but user can set higher for powerful servers
 MAX_CONCURRENT_JOBS = int(os.environ.get("MAX_CONCURRENT_JOBS", "5"))
-MAX_FILE_SIZE_MB = 2048  # 2GB limit
+# Upload ceiling (server safety valve, not a paywall): 8GB lets even long
+# podcasts in. Tune down on tiny boxes.
+MAX_FILE_SIZE_MB = int(os.environ.get("MAX_FILE_SIZE_MB", "8192"))
 
 # How TikTok receives our uploads. MEDIA_UPLOAD lands the video in the user's
 # TikTok drafts so they finish the post inside TikTok's own editor; DIRECT_POST
@@ -60,10 +63,11 @@ QUALITY_PROBE_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
 DISABLE_YOUTUBE_URL = os.environ.get("DISABLE_YOUTUBE_URL", "false").lower() in ("1", "true", "yes")
 
 # ---- Cloud billing (paid / managed-keys) integration --------------------------
-# All paid-mode code lives in the optional `cloud/` package and is imported ONLY
-# when BILLING_ENABLED is set. With the flag off, the app behaves exactly as the
-# self-hosted BYOK app does today (no extra dependencies required).
-BILLING_ENABLED = os.environ.get("BILLING_ENABLED", "").lower() in ("1", "true", "yes")
+# OpenShorts+ is the ZERO-BUDGET edition: billing is compiled out. There is no
+# paywall, no monthly-minute quota, no plan gating, no watermark — everything
+# runs on free AI providers through ai_gateway.py. The `cloud/` package stays
+# importable but is never activated.
+BILLING_ENABLED = False  # hard-disabled in the zero-budget edition
 # Force full pipeline logs to the client even under billing (local debugging).
 DEBUG_LOGS = os.environ.get("DEBUG_LOGS", "").lower() in ("1", "true", "yes")
 
@@ -78,6 +82,120 @@ else:
     _cloud_config = None
     _alerts = None
 
+# ---- Server-side settings store (free AI keys + caption theme) ---------------
+# Lets you paste free provider keys straight into the dashboard Settings page
+# (from a phone, no server env edits needed). Keys are stored on the server's
+# disk (DATA_DIR/OUTPUT_DIR), merged into the process environment so the AI
+# gateway picks them up immediately, and inherited by processing subprocesses.
+# Platform env vars (Vercel/Render) work exactly the same way — UI-set keys
+# simply take precedence while they exist.
+PROVIDER_KEY_ENV = {
+    "openrouter": "OPENROUTER_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+    "groq": "GROQ_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+    "zhipu": "ZHIPU_API_KEY",
+    "dashscope": "DASHSCOPE_API_KEY",
+    "moonshot": "MOONSHOT_API_KEY",
+}
+
+SETTINGS_DIR = os.environ.get("DATA_DIR", "").strip() or OUTPUT_DIR
+SETTINGS_FILE = os.path.join(SETTINGS_DIR, "server_settings.json")
+
+DEFAULT_SETTINGS = {"keys": {}, "caption_theme": "auto"}
+
+
+def _load_settings() -> dict:
+    try:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            data = {}
+    except Exception:
+        data = {}
+    merged = dict(DEFAULT_SETTINGS)
+    merged.update(data or {})
+    if not isinstance(merged.get("keys"), dict):
+        merged["keys"] = {}
+    return merged
+
+
+def _save_settings(settings: dict) -> None:
+    try:
+        os.makedirs(SETTINGS_DIR, exist_ok=True)
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2)
+    except Exception as e:
+        print(f"⚠️ Could not persist server settings: {e}")
+
+
+def _apply_settings(settings: dict) -> None:
+    """Merge stored settings into the process environment (live).
+
+    Multiple keys per provider are supported: the first goes to the provider's
+    KEY env var, the rest to KEY_2, KEY_3... (the AI gateway expands them all).
+
+    IMPORTANT: this never removes a provider's primary env var — platform env
+    (Vercel/Render) is a legitimate key source that must survive restarts.
+    UI-set keys only override while they exist; clearing happens explicitly in
+    update_server_settings.
+    """
+    for provider, env_var in PROVIDER_KEY_ENV.items():
+        keys = settings.get("keys") or {}
+        stored = keys.get(provider)
+        if isinstance(stored, str):  # legacy single-string form
+            stored = [stored] if stored.strip() else []
+        if not isinstance(stored, list):
+            stored = []
+        stored = [k.strip() for k in stored if k and k.strip()]
+        if stored:
+            os.environ[env_var] = stored[0]
+        # Numbered slots (_2, _3, ...) only ever come from settings, so prune
+        # them when the list shrinks; the primary slot is left untouched.
+        i = 2
+        for extra in stored[1:]:
+            os.environ[f"{env_var}_{i}"] = extra
+            i += 1
+        while os.environ.get(f"{env_var}_{i}"):
+            os.environ.pop(f"{env_var}_{i}")
+            i += 1
+    theme = (settings.get("caption_theme") or "auto").strip().lower()
+    if theme in ("", "auto", "default"):
+        os.environ.pop("CAPTION_THEME", None)
+    else:
+        os.environ["CAPTION_THEME"] = theme
+
+
+def _normalize_stored_keys(keys) -> dict:
+    """Coerce settings['keys'] into {provider: [key, ...]}."""
+    if not isinstance(keys, dict):
+        return {}
+    out = {}
+    for provider, value in keys.items():
+        if provider not in PROVIDER_KEY_ENV:
+            continue
+        if isinstance(value, str):
+            items = [value]
+        elif isinstance(value, list):
+            items = value
+        else:
+            continue
+        cleaned = []
+        for k in items:
+            if isinstance(k, str) and k.strip():
+                cleaned.append(k.strip())
+        if cleaned:
+            out[provider] = cleaned
+    return out
+
+
+# Apply persisted settings at import time so the gateway + subprocesses see
+# them from the first request onward (fail-open on any error).
+try:
+    _apply_settings(_load_settings())
+except Exception as e:
+    print(f"⚠️ Could not apply server settings at startup: {e}")
+
     async def get_current_user_optional(request: Request):
         # No-op dependency in self-host mode: every request is anonymous / BYOK.
         return None
@@ -89,21 +207,20 @@ async def _user_from_request(request: Request):
 
 
 async def resolve_gemini(request: Request) -> Optional[str]:
-    """Resolve the Gemini API key for a request.
+    """Resolve the AI key for a request.
 
-    Cloud (hosted) is PAID-ONLY: there is no BYOK for the core pipeline, so the
-    ``X-Gemini-Key`` header is ignored — an entitled user (active plan or trial)
-    gets the managed server key, everyone else gets ``None`` (→ 402, start trial).
-    Self-host keeps BYOK: header wins, else the env fallback.
+    OpenShorts+ zero-budget edition: when any free provider is configured
+    (OpenRouter, DeepSeek, GLM, Qwen, Kimi, Groq, Gemini free tier...), the
+    gateway handles providers itself and we return the GATEWAY_SENTINEL so
+    callers know AI is available. A caller-supplied ``X-Gemini-Key`` /
+    ``X-AI-Key`` header still wins for legacy BYOK clients.
     """
-    if BILLING_ENABLED:
-        user = await _user_from_request(request)
-        if managed_keys.has_active_entitlement(user):
-            return managed_keys.gemini_key()
-        return None
-    header = request.headers.get("X-Gemini-Key")
+    header = (request.headers.get("X-Gemini-Key")
+              or request.headers.get("X-AI-Key"))
     if header:
         return header
+    if ai_gateway.is_configured():
+        return ai_gateway.GATEWAY_SENTINEL
     return os.environ.get("GEMINI_API_KEY")
 
 
@@ -127,17 +244,20 @@ async def resolve_upload_post(request: Request, body_key: Optional[str] = None):
 
 
 def gemini_missing_error():
-    """The right 4xx when no Gemini key could be resolved.
+    """The right 4xx when no AI provider could be resolved.
 
-    402 for a signed-in-but-not-entitled cloud user (needs a plan); 400 otherwise
-    (BYOK header simply missing).
+    Zero-budget edition: 400 with a helpful pointer to the free providers.
     """
-    if BILLING_ENABLED:
-        return HTTPException(status_code=402, detail={
-            "error": "no_plan",
-            "message": "This action needs an active plan. Choose a plan or add your own API key.",
-        })
-    return HTTPException(status_code=400, detail="Missing X-Gemini-Key header")
+    return HTTPException(status_code=400, detail={
+        "error": "no_ai_provider",
+        "message": (
+            "No AI provider configured. Add a free key to your .env: "
+            "OPENROUTER_API_KEY (OpenRouter free models), GEMINI_API_KEY "
+            "(Gemini free tier), GROQ_API_KEY, DEEPSEEK_API_KEY, "
+            "ZHIPU_API_KEY, DASHSCOPE_API_KEY or MOONSHOT_API_KEY — "
+            "see .env.example."
+        ),
+    })
 
 
 # Probe rate limiter. In-memory, resets on restart by design — the hard monthly
@@ -571,18 +691,10 @@ def _resume_interrupted_jobs() -> set:
             _clear_resume_manifest(job_id)
             continue
 
-        # Rebuild env from scratch — the manifest holds no secrets. Managed
-        # (cloud) jobs get the server key; self-host falls back to its env key.
+        # Rebuild env from scratch — the manifest holds no secrets. The
+        # zero-budget gateway reads provider keys from the environment itself.
         env = os.environ.copy()
-        if BILLING_ENABLED and user_id is not None:
-            try:
-                env["GEMINI_API_KEY"] = managed_keys.gemini_key()
-            except Exception:
-                pass
-        if m.get("watermark"):
-            env["WATERMARK"] = "1"
-        else:
-            env.pop("WATERMARK", None)
+        env.pop("WATERMARK", None)  # no watermarks in the zero-budget edition
 
         m["attempts"] = attempts
         try:
@@ -1368,6 +1480,81 @@ async def get_config():
         "youtubeUrlEnabled": not DISABLE_YOUTUBE_URL,
         "billingEnabled": BILLING_ENABLED,
         "googleAuthEnabled": bool(BILLING_ENABLED and cloud.settings.google_auth_enabled),
+        # Zero-budget edition: the backend resolves free AI providers itself,
+        # so the dashboard knows whether a client-side key is required at all.
+        "aiConfigured": ai_gateway.is_configured(),
+        "aiProviders": ai_gateway.configured_providers(),
+        "providerStatus": ai_gateway.provider_status(),
+    }
+
+
+class SettingsUpdateRequest(BaseModel):
+    keys: Optional[Dict[str, Any]] = None   # provider -> key | [keys] ("" / [] / null clears)
+    caption_theme: Optional[str] = None     # "auto" | theme name
+
+
+@app.get("/api/settings")
+async def get_server_settings():
+    """What's configured server-side (provider names only — never secrets)."""
+    settings = _load_settings()
+    keys = _normalize_stored_keys(settings.get("keys") or {})
+    free_count = 0
+    try:
+        free_count = len(ai_gateway.discover_openrouter_free_models(
+            kind="text", limit=1000))
+    except Exception:
+        pass
+    return {
+        "configuredProviders": list(keys.keys()),
+        "keyCounts": {p: len(v) for p, v in keys.items()},
+        "captionTheme": (settings.get("caption_theme") or "auto").strip().lower(),
+        "availableProviders": list(PROVIDER_KEY_ENV.keys()),
+        "providerStatus": ai_gateway.provider_status(),
+        "openrouterFreeModels": free_count,
+        "freeModelAutoDiscovery": ai_gateway.FREE_MODEL_AUTODISCOVERY,
+    }
+
+
+@app.post("/api/settings")
+async def update_server_settings(req: SettingsUpdateRequest):
+    """Save free AI keys / default caption theme on the server.
+
+    Keys are stored in server_settings.json (DATA_DIR/OUTPUT_DIR), merged into
+    the environment immediately (KEY, KEY_2, ... for multiple keys), and
+    inherited by processing subprocesses — so you can configure everything
+    from the app UI on any device.
+    """
+    settings = _load_settings()
+    keys = _normalize_stored_keys(settings.get("keys") or {})
+    if req.keys:
+        incoming = _normalize_stored_keys(req.keys)
+        for provider in PROVIDER_KEY_ENV:
+            if provider in incoming:
+                keys[provider] = incoming[provider]
+            elif provider in req.keys and not incoming.get(provider):
+                # Explicit clear: remove numbered slots (UI-only) and the
+                # primary slot too when it was UI-set. A platform env key that
+                # was never overridden stays untouched.
+                env_var = PROVIDER_KEY_ENV[provider]
+                i = 2
+                while os.environ.get(f"{env_var}_{i}"):
+                    os.environ.pop(f"{env_var}_{i}")
+                    i += 1
+                if keys.get(provider):
+                    os.environ.pop(env_var, None)
+                keys.pop(provider, None)
+        settings["keys"] = keys
+    if req.caption_theme is not None:
+        theme = req.caption_theme.strip().lower()
+        settings["caption_theme"] = theme if theme in ("", "auto") else theme
+    _save_settings(settings)
+    _apply_settings(settings)
+    return {
+        "configuredProviders": list(keys.keys()),
+        "keyCounts": {p: len(v) for p, v in keys.items()},
+        "captionTheme": (settings.get("caption_theme") or "auto").strip().lower(),
+        "aiConfigured": ai_gateway.is_configured(),
+        "providerStatus": ai_gateway.provider_status(),
     }
 
 async def _probe_youtube_quality(url: str) -> dict:
@@ -1534,11 +1721,13 @@ async def process_endpoint(
     # Prepare Command
     cmd = ["python", "-u", "main.py"] # -u for unbuffered
     env = os.environ.copy()
-    env["GEMINI_API_KEY"] = api_key # Override with key from request
+    # Legacy BYOK header only; the gateway sentinel must not be forwarded as a
+    # real Gemini key — the subprocess resolves free providers itself.
+    if api_key and api_key != ai_gateway.GATEWAY_SENTINEL:
+        env["GEMINI_API_KEY"] = api_key
 
     # Optional layouts are per job. The renderer reads these at import time in
-    # the subprocess, so they must be set before Popen — same path WATERMARK
-    # already takes.
+    # the subprocess, so they must be set before Popen.
     chosen = layout_env(layouts)
     env.update(chosen)
     if chosen:
@@ -1575,12 +1764,8 @@ async def process_endpoint(
 
     print(f"[attestation] job={job_id} ip={attestation['ip']} source={attestation['source']} ack=true")
 
-    # Meter + reserve minutes for managed users (no-op for BYOK / self-host).
-    user_id, priority, reservation_id, user_plan = await reserve_process_minutes(request, url, input_path, job_id)
-    if user_plan == "free":
-        # Free-plan clips carry a burned-in watermark (applied by the main.py
-        # subprocess after each clip renders).
-        env["WATERMARK"] = "1"
+    # No metering, no plan gating, no watermark in the zero-budget edition.
+    user_id, priority, reservation_id, user_plan = None, 2, None, None
 
     # Absolute-URL base for the webhook payload: explicit env wins (the API may
     # sit behind a proxy whose forwarded headers we can't trust), else what the
@@ -1597,7 +1782,7 @@ async def process_endpoint(
         'attestation': attestation,
         'user_id': user_id,
         'reservation_id': reservation_id,
-        'watermark': env.get("WATERMARK") == "1",
+        'watermark': False,  # zero-budget edition: never
         'webhook_url': webhook_url,
         'webhook_secret': webhook_secret,
         'base_url': api_base,
@@ -2804,6 +2989,198 @@ async def post_to_socials(req: SocialPostRequest, request: Request):
         print(f"❌ Social Post Exception: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# --------------------------------------------------------------------------- #
+# Text summary — turn any processed long video into a chaptered written digest
+# --------------------------------------------------------------------------- #
+class SummaryRequest(BaseModel):
+    job_id: str
+    language: str = "auto"
+
+
+_SUMMARY_SYSTEM = (
+    "You are a professional content repurposing editor. Return strict JSON "
+    "only — no markdown, no commentary."
+)
+
+SUMMARY_PROMPT_TEMPLATE = """Turn this long-form video transcript into a polished, repurposable text summary.
+
+VIDEO DURATION: {duration} seconds
+VIDEO LANGUAGE: {language}
+
+TRANSCRIPT:
+{transcript}
+
+Return JSON exactly like this:
+{{
+  "title": "catchy summary title",
+  "overview": "3-4 sentence overview of the whole video",
+  "chapters": [
+    {{
+      "start": 0,
+      "end": 123.4,
+      "title": "short chapter title",
+      "points": ["key point 1", "key point 2", "key point 3"]
+    }}
+  ],
+  "key_takeaways": ["3-6 overall takeaways"],
+  "quotes": [
+    {{"time": 45.2, "quote": "memorable exact or near-exact spoken line"}}
+  ],
+  "hooks": [
+    "5 short scroll-stopping hook lines that could caption a clip from this video"
+  ]
+}}
+
+RULES:
+- Chapters must cover the whole video in order, minimum 3, maximum 12.
+- Keep every "points" bullet under 140 characters.
+- The whole summary must be in the video's language ({language}).
+- Timestamps are absolute seconds from the start."""
+
+
+@app.post("/api/summary")
+async def generate_text_summary(req: SummaryRequest, request: Request):
+    """Chaptered text summary of a processed job's transcript (free AI)."""
+    api_key = await resolve_gemini(request)
+    if not api_key:
+        raise gemini_missing_error()
+    await _ensure_job_files(req.job_id, request)
+    if req.job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    job = jobs[req.job_id]
+    await _assert_job_owner(request, job)
+
+    output_dir = os.path.join(OUTPUT_DIR, req.job_id)
+    json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
+    if not json_files:
+        raise HTTPException(status_code=404, detail="Metadata not found")
+    with open(json_files[0], "r", encoding="utf-8") as f:
+        data = json.load(f)
+    transcript = data.get("transcript")
+    if not transcript:
+        raise HTTPException(status_code=400, detail="No transcript available for this job.")
+
+    segments = transcript.get("segments") or []
+    if not segments:
+        raise HTTPException(status_code=400, detail="Transcript has no segments.")
+    text = transcript.get("text") or " ".join(
+        str(s.get("text") or "") for s in segments)
+    duration = max(s.get("end", 0) for s in segments)
+    language = (req.language if req.language != "auto"
+                else transcript.get("language") or "english")
+    # Cap the transcript so long podcasts don't blow the free model context.
+    max_chars = int(os.environ.get("SUMMARY_MAX_CHARS", "24000"))
+    if len(text) > max_chars:
+        text = text[:max_chars] + " …[truncated]"
+
+    prompt = SUMMARY_PROMPT_TEMPLATE.format(
+        duration=duration, language=language, transcript=text)
+
+    def _run():
+        parsed, _result = ai_gateway.complete_json(
+            system=_SUMMARY_SYSTEM, user=prompt, temperature=0.4)
+        return parsed
+
+    try:
+        loop = asyncio.get_event_loop()
+        summary = await loop.run_in_executor(None, _run)
+    except ai_gateway.AIGatewayError as e:
+        raise HTTPException(status_code=500, detail=f"Summary generation failed: {e}")
+
+    if not isinstance(summary, dict):
+        raise HTTPException(status_code=500, detail="Summary generation returned no data.")
+
+    # Persist the summary next to the job + return it.
+    try:
+        summary_path = os.path.join(output_dir, "summary.json")
+        with open(summary_path, "w", encoding="utf-8") as f:
+            json.dump({"job_id": req.job_id, "language": language, **summary},
+                      f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"⚠️ Could not persist summary: {e}")
+
+    return {"success": True, "summary": summary, "language": language}
+
+
+@app.get("/api/summary/{job_id}")
+async def get_text_summary(job_id: str, request: Request):
+    """Fetch a previously generated summary for a job."""
+    await _ensure_job_files(job_id, request)
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    await _assert_job_owner(request, jobs[job_id])
+    summary_path = os.path.join(OUTPUT_DIR, job_id, "summary.json")
+    if not os.path.exists(summary_path):
+        raise HTTPException(status_code=404, detail="No summary yet — generate one first.")
+    with open(summary_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+# --------------------------------------------------------------------------- #
+# Publish kit — viral title + description + trending hashtags for one clip.
+# Nothing is posted automatically: the user reviews the clip, copies the kit
+# and posts it themselves (YouTube/TikTok/IG terms: manual posting).
+# --------------------------------------------------------------------------- #
+class PublishKitRequest(BaseModel):
+    job_id: str
+    clip_index: int
+    language: str = "auto"   # "auto" uses the transcript's language
+    region: str = "US"       # trend region for the daily trending hashtags
+
+
+@app.get("/api/publish-kit/regions")
+async def publish_kit_regions():
+    import publish_kit
+    return {"regions": publish_kit.REGIONS}
+
+
+@app.post("/api/publish-kit")
+async def generate_publish_kit(req: PublishKitRequest, request: Request):
+    api_key = await resolve_gemini(request)
+    if not api_key:
+        raise gemini_missing_error()
+    await _ensure_job_files(req.job_id, request)
+    if req.job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    job = jobs[req.job_id]
+    await _assert_job_owner(request, job)
+
+    output_dir = os.path.join(OUTPUT_DIR, req.job_id)
+    json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
+    if not json_files:
+        raise HTTPException(status_code=404, detail="Metadata not found")
+    with open(json_files[0], "r", encoding="utf-8") as f:
+        metadata = json.load(f)
+
+    import publish_kit as pk
+
+    def _run():
+        return pk.generate_publish_kit(
+            metadata, req.clip_index,
+            language=req.language, region=req.region)
+
+    try:
+        loop = asyncio.get_event_loop()
+        kit = await loop.run_in_executor(None, _run)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ai_gateway.AIGatewayError as e:
+        raise HTTPException(status_code=500,
+                            detail=f"Publish kit generation failed: {e}")
+
+    # Persist next to the job for re-fetching later.
+    try:
+        kit_path = os.path.join(output_dir, "publish_kit.json")
+        with open(kit_path, "w", encoding="utf-8") as f:
+            json.dump({"job_id": req.job_id, "clip_index": req.clip_index,
+                       **kit}, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"⚠️ Could not persist publish kit: {e}")
+
+    return {"success": True, "kit": kit}
+
+
 @app.get("/api/social/user")
 async def get_social_user(request: Request):
     """Proxy to fetch user profiles from Upload-Post.
@@ -3133,19 +3510,10 @@ async def thumbnail_generate(
     face: Optional[UploadFile] = File(None),
     background: Optional[UploadFile] = File(None),
 ):
-    """Generate YouTube thumbnails with Gemini image generation."""
+    """Generate YouTube thumbnails (free AI image generation, local fallback)."""
     api_key = await resolve_gemini(request)
     if not api_key:
         raise gemini_missing_error()
-
-    # Image generation is the one expensive managed Gemini call — paid plans only.
-    if BILLING_ENABLED:
-        user = await _user_from_request(request)
-        if user is not None and user.plan == "free":
-            raise HTTPException(status_code=403, detail={
-                "error": "plan_required",
-                "message": "AI thumbnail generation is available on paid plans.",
-            })
 
     # Clamp count
     count = min(max(1, count), 6)
@@ -3527,11 +3895,15 @@ async def saasshorts_actor_options(
     request: Request,
     x_fal_key: Optional[str] = Header(None, alias="X-Fal-Key"),
 ):
-    """Generate multiple actor image options for the user to choose from."""
+    """Generate multiple actor image options for the user to choose from.
+
+    Zero-budget edition: no fal.ai key needed — free image generation or a
+    local stylized portrait is used instead.
+    """
     await require_managed_entitlement(request)
     fal_key = x_fal_key
     if not fal_key:
-        raise HTTPException(status_code=400, detail="Missing fal.ai API Key")
+        print("[SaaSShorts] No fal.ai key — using free actor image generation.")
 
     try:
         job_id = str(uuid.uuid4())
@@ -3855,15 +4227,21 @@ async def saasshorts_generate(
     x_fal_key: Optional[str] = Header(None, alias="X-Fal-Key"),
     x_elevenlabs_key: Optional[str] = Header(None, alias="X-ElevenLabs-Key"),
 ):
-    """Generate a SaaS UGC video from a script. Returns a job_id for polling."""
+    """Generate a SaaS UGC video from a script. Returns a job_id for polling.
+
+    Zero-budget edition: fal.ai / ElevenLabs keys are optional. Without them
+    the pipeline uses free image generation (or local fallback), free Edge TTS
+    voiceover and Ken Burns talking-head motion — everything still works at
+    $0.00.
+    """
     await require_managed_entitlement(request)
     fal_key = x_fal_key
     elevenlabs_key = x_elevenlabs_key
 
     if not fal_key:
-        raise HTTPException(status_code=400, detail="Missing fal.ai API Key (X-Fal-Key header)")
+        print("[SaaSShorts] No fal.ai key — using free image/Ken Burns mode.")
     if not elevenlabs_key:
-        raise HTTPException(status_code=400, detail="Missing ElevenLabs API Key (X-ElevenLabs-Key header)")
+        print("[SaaSShorts] No ElevenLabs key — using free Edge TTS voiceover.")
 
     # Support retry: reuse output_dir so cached assets (image, voice, head, broll) are kept
     reused = False
@@ -4044,11 +4422,22 @@ async def saasshorts_voices(
         except Exception:
             pass
 
-    # Fallback to default voices
-    return {
-        "voices": [
-            {"voice_id": vid, "name": name, "category": "default"}
-            for name, vid in DEFAULT_VOICES.items()
-        ],
-        "source": "defaults",
-    }
+    # Fallback: ElevenLabs default voices + free Microsoft Edge TTS voices.
+    voices = [
+        {"voice_id": vid, "name": name, "category": "default"}
+        for name, vid in DEFAULT_VOICES.items()
+    ]
+    edge_voices = [
+        ("en-US-JennyNeural", "Jenny (Free Edge TTS, Female, en-US)"),
+        ("en-US-ChristopherNeural", "Christopher (Free Edge TTS, Male, en-US)"),
+        ("en-GB-SoniaNeural", "Sonia (Free Edge TTS, Female, en-GB)"),
+        ("en-GB-RyanNeural", "Ryan (Free Edge TTS, Male, en-GB)"),
+        ("es-MX-DaliaNeural", "Dalia (Free Edge TTS, Female, es-MX)"),
+        ("es-ES-AlvaroNeural", "Alvaro (Free Edge TTS, Male, es-ES)"),
+        ("hi-IN-SwaraNeural", "Swara (Free Edge TTS, Female, hi-IN)"),
+        ("ja-JP-NanamiNeural", "Nanami (Free Edge TTS, Female, ja-JP)"),
+        ("zh-CN-XiaoxiaoNeural", "Xiaoxiao (Free Edge TTS, Female, zh-CN)"),
+    ]
+    for vid, name in edge_voices:
+        voices.append({"voice_id": vid, "name": name, "category": "edge-tts-free"})
+    return {"voices": voices, "source": "defaults+edge-tts"}
