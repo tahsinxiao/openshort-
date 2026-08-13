@@ -75,7 +75,7 @@ jobs:
       - name: Install the app + impersonation support
         run: |
           pip install -r requirements.txt
-          pip install -U "yt-dlp[default]" curl_cffi
+          pip install -U "yt-dlp[default]" curl_cffi<0.13
 
       - name: Clip the video 🎬
         run: |
