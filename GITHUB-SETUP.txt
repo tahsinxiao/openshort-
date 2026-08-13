@@ -1,0 +1,15 @@
+OPENSHORTS+ — GITHUB ACTIONS SETUP (my phone notes)
+
+1) AI key (done once):
+   repo → Settings → Secrets and variables → Actions → New repository secret
+   Name: OPENROUTER_API_KEY   Value: <my openrouter key>
+
+2) Run a clip (every time):
+   repo → Actions → "Clip a video" → Run workflow
+   paste link → whisper_model: tiny → Run
+
+3) Download:
+   green run → Artifacts → clips-<number> → Download ZIP
+
+First run ~10-15 min (installs everything). Later runs: ~30-60 min per hour of video.
+Free forever (public repo). 6-hour max per run. Artifacts kept 90 days.
