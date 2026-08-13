@@ -1,0 +1,90 @@
+name: Clip a video
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: 'Video link (YouTube / Kick / Twitch / any yt-dlp source)'
+        required: true
+        type: string
+      whisper_model:
+        description: 'Whisper model — tiny = fast, base/small = better words'
+        required: false
+        default: 'tiny'
+        type: choice
+        options: ['tiny', 'base', 'small']
+      output_format:
+        description: 'Clip shape'
+        required: false
+        default: 'vertical'
+        type: choice
+        options: ['vertical', 'square', 'horizontal']
+
+concurrency:
+  group: clip-videos
+  cancel-in-progress: false
+
+jobs:
+  clip:
+    name: Clip ${{ inputs.video_url }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      WHISPER_MODEL: ${{ inputs.whisper_model }}
+      WHISPER_COMPUTE: int8
+      MAX_CONCURRENT_JOBS: 1
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
+      DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+      MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Check an AI key is configured
+        run: |
+          if [ -z "$OPENROUTER_API_KEY$GEMINI_API_KEY$GROQ_API_KEY$DEEPSEEK_API_KEY$ZHIPU_API_KEY$DASHSCOPE_API_KEY$MOONSHOT_API_KEY" ]; then
+            echo "::error::No AI provider key found. Add one at repo → Settings → Secrets → Actions"
+            exit 1
+          fi
+          echo "✅ AI key detected."
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install ffmpeg + system libs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 \
+            fontconfig fonts-liberation
+
+      - name: Install PyTorch (CPU build)
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu \
+            torch==2.11.0 torchvision==0.26.0 \
+            || pip install torch==2.11.0 torchvision==0.26.0
+
+      - name: Install the app
+        run: pip install -r requirements.txt
+
+      - name: Clip the video 🎬
+        run: |
+          mkdir -p output
+          python -u main.py -u "${{ inputs.video_url }}" \
+            -o output --format "${{ inputs.output_format }}"
+
+      - name: Upload clips 📦
+        uses: actions/upload-artifact@v4
+        with:
+          name: clips-${{ github.run_id }}
+          path: output/**/*.mp4
+          if-no-files-found: error
+          retention-days: 90
