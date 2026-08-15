@@ -16,6 +16,7 @@ import os
 import numpy as np
 from tqdm import tqdm
 import yt_dlp
+from yt_dlp.networking.impersonate import ImpersonateTarget
 import mediapipe as mp
 # import whisper (replaced by faster_whisper inside function)
 from google import genai
@@ -679,10 +680,12 @@ def download_youtube_video(url, output_dir="."):
             'quiet': False, 'verbose': True, 'no_warnings': False,
             'cookiefile': cookies_path if cookies_path else None,
             'proxy': proxy, 'socket_timeout': 30, 'retries': 10, 'fragment_retries': 10,
-                        'nocheckcertificate': True, 'cachedir': False,
+            'nocheckcertificate': True, 'cachedir': False,
             # Impersonate a real Chrome browser — fixes "Sign in to confirm you're
-            # not a bot" (YouTube) and 403 (Kick) on datacenter IPs. Needs curl_cffi.
-            'impersonate': 'chrome',
+            # not a bot" (YouTube) and 403 (Kick). Needs curl_cffi. Must be an
+            # ImpersonateTarget OBJECT, not the string 'chrome' — yt-dlp 2026.07.04
+            # crashes with AssertionError in _impersonate_target_available otherwise.
+            'impersonate': ImpersonateTarget('chrome'),
             'extractor_args': extractor_args,
             'http_headers': {
                 'User-Agent': (
