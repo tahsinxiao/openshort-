@@ -1,3 +1,23 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Clip a long video with GitHub Actions — FREE, no credit card, runs even
+# while your phone is off.
+#
+# HOW TO USE (all from your phone / browser):
+#   1. (Once) Add your free AI key as a repository secret:
+#        repo → Settings → Secrets and variables → Actions → New repository secret
+#        Name: OPENROUTER_API_KEY   (or GEMINI_API_KEY / GROQ_API_KEY / ...)
+#   2. Run the workflow:
+#        repo → Actions → "Clip a video" → Run workflow →
+#        paste your YouTube/Kick/Twitch link → Run
+#   3. When the run finishes (green), open it → Artifacts →
+#        "clips-<run>" → download the ZIP with your finished 9:16 clips.
+#
+# NOTES
+#   * Free on PUBLIC repos (unlimited minutes). Private repos: 2,000 min/month.
+#   * Runner: 7 GB RAM / 2 CPU Ubuntu. Job cap: 6 hours (long podcasts fit).
+#   * Artifacts are kept 90 days, then deleted — download your clips after.
+#   * First run installs dependencies (~5-8 min). Later runs reuse the cache.
+# ─────────────────────────────────────────────────────────────────────────────
 name: Clip a video
 
 on:
@@ -20,6 +40,7 @@ on:
         type: choice
         options: ['vertical', 'square', 'horizontal']
 
+# Never run two clipping jobs at once (they share the runner budget).
 concurrency:
   group: clip-videos
   cancel-in-progress: false
@@ -28,11 +49,12 @@ jobs:
   clip:
     name: Clip ${{ inputs.video_url }}
     runs-on: ubuntu-latest
-    timeout-minutes: 330
+    timeout-minutes: 330   # under GitHub's 6-hour job cap
     env:
       WHISPER_MODEL: ${{ inputs.whisper_model }}
       WHISPER_COMPUTE: int8
       MAX_CONCURRENT_JOBS: 1
+      # Any free AI key you've stored as a repo secret is passed through.
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
@@ -40,6 +62,8 @@ jobs:
       ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
       DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
       MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+      # YouTube login cookies (exported from Kiwi). Lets yt-dlp download
+      # videos that YouTube blocks for "not a bot" on server IPs.
       YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
 
     steps:
@@ -49,7 +73,9 @@ jobs:
       - name: Check an AI key is configured
         run: |
           if [ -z "$OPENROUTER_API_KEY$GEMINI_API_KEY$GROQ_API_KEY$DEEPSEEK_API_KEY$ZHIPU_API_KEY$DASHSCOPE_API_KEY$MOONSHOT_API_KEY" ]; then
-            echo "::error::No AI provider key found. Add one at repo → Settings → Secrets → Actions"
+            echo "::error::No AI provider key found. Add one at:"
+            echo "  repo → Settings → Secrets and variables → Actions →"
+            echo "  New repository secret → OPENROUTER_API_KEY (or GEMINI_API_KEY)"
             exit 1
           fi
           echo "✅ AI key detected."
@@ -67,16 +93,14 @@ jobs:
             ffmpeg libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 \
             fontconfig fonts-liberation
 
-      - name: Install PyTorch (CPU build)
+      - name: Install PyTorch (CPU build — faster download, no GPU needed)
         run: |
           pip install --index-url https://download.pytorch.org/whl/cpu \
             torch==2.11.0 torchvision==0.26.0 \
             || pip install torch==2.11.0 torchvision==0.26.0
 
-      - name: Install the app + impersonation support
-        run: |
-          pip install -r requirements.txt
-          pip install -U "yt-dlp[default]" "curl_cffi<0.13"
+      - name: Install the app
+        run: pip install -r requirements.txt
 
       - name: Install Deno (YouTube needs it for JS challenges / PO tokens)
         run: |
@@ -91,10 +115,19 @@ jobs:
           python -u main.py -u "${{ inputs.video_url }}" \
             -o output --format "${{ inputs.output_format }}"
 
+      - name: Show what was produced
+        run: |
+          echo "=== Finished clips (subtitled) ==="
+          find output -type f -name "subtitled_*.mp4" | sort
+          echo "=== Metadata ==="
+          find output -type f -name "*_metadata.json" | sort
+
       - name: Upload clips 📦
         uses: actions/upload-artifact@v4
         with:
           name: clips-${{ github.run_id }}
-          path: output/**/*.mp4
+          path: |
+            output/subtitled_*.mp4
+            output/**/*.json
           if-no-files-found: error
           retention-days: 90
