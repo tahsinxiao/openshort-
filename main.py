@@ -655,6 +655,7 @@ def download_youtube_video(url, output_dir="."):
         'youtube': {
             'player_client': ['tv_embed', 'android', 'mweb', 'web'],
             'player_skip': ['webpage', 'configs'],
+            'data_sync_id': ['auto'],
         }
     }
 
@@ -673,7 +674,7 @@ def download_youtube_video(url, output_dir="."):
         return ('bestvideo[vcodec^=avc1][height<=1080][ext=mp4]+bestaudio[ext=m4a]/'
                 'bestvideo[vcodec^=avc1][height<=1080]+bestaudio/'
                 'best[height<=1080][ext=mp4]/best[ext=mp4]/best')
-    fallback_fmt = 'best[ext=mp4]/best'
+    fallback_fmt = 'bestvideo[height<=2160][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=2160]+bestaudio/best[height<=2160][ext=mp4]/best[height<=2160]/best'
 
     def _base_opts(extractor_args, proxy):
         return {
