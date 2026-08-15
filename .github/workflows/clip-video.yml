@@ -8,6 +8,7 @@
 #        Name: OPENROUTER_API_KEY   (or GEMINI_API_KEY / GROQ_API_KEY / ...)
 #      Also add your YouTube cookies as a secret named YOUTUBE_COOKIES
 #      (exported from Kiwi with the "Get cookies.txt LOCALLY" extension).
+#      Optional but recommended: your phone-tunnel URL as a secret PROXY_URL.
 #   2. Run the workflow:
 #        repo → Actions → "Clip a video" → Run workflow →
 #        paste your YouTube/Kick/Twitch link → Run
@@ -60,6 +61,11 @@ jobs:
       # them YouTube blocks GitHub's datacenter IPs with "Sign in to confirm
       # you're not a bot". Add as a repo secret named YOUTUBE_COOKIES.
       YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+      # OPTIONAL but RECOMMENDED for reliability: the phone-tunnel URL (e.g.
+      # https://xxx.trycloudflare.com). When set, the download goes through
+      # your phone's home IP, so YouTube never sees the Azure datacenter IP
+      # and the bot-wall disappears. Add as a repo secret named PROXY_URL.
+      PROXY_URL: ${{ secrets.PROXY_URL }}
       # Any free AI key you've stored as a repo secret is passed through.
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
