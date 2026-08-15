@@ -646,18 +646,26 @@ def download_youtube_video(url, output_dir="."):
     _bgutil_http = os.environ.get("BGUTIL_BASE_URL", "").strip()
     _bgutil_script = os.environ.get("BGUTIL_SCRIPT_PATH", "").strip()
     if _bgutil_http:
-        hd_args = {'youtubepot-bgutilhttp': {'base_url': [_bgutil_http]}}
+        pot_args = {'youtubepot-bgutilhttp': {'base_url': [_bgutil_http]}}
     elif _bgutil_script:
-        hd_args = {'youtubepot-bgutilscript': {'script_path': [_bgutil_script]}}
+        pot_args = {'youtubepot-bgutilscript': {'script_path': [_bgutil_script]}}
     else:
-        hd_args = None
+        pot_args = None
+    hd_args = pot_args
     fallback_args = {
         'youtube': {
             'player_client': ['tv_embed', 'android', 'mweb', 'web'],
             'player_skip': ['webpage', 'configs'],
+            # Auto-fetch the account's Data Sync ID from the cookies so the
+            # mweb/web clients can mint GVS PO tokens — without it YouTube
+            # skips the HD formats and you only get 360p (itag 18).
             'data_sync_id': ['auto'],
         }
     }
+    if pot_args:
+        # Give the fallback attempt the same PO-token provider too, so a failed
+        # HD pass doesn't drop the token minting on the next try.
+        fallback_args.update(pot_args)
 
     # Cap at 720p ONLY when the bytes actually go through the paid proxy — that
     # cap exists to control bandwidth cost, and the direct attempt has none.
