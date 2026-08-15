@@ -62,9 +62,6 @@ jobs:
       ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
       DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
       MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
-      # YouTube login cookies (exported from Kiwi). Lets yt-dlp download
-      # videos that YouTube blocks for "not a bot" on server IPs.
-      YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
 
     steps:
       - name: Check out the code
@@ -99,8 +96,10 @@ jobs:
             torch==2.11.0 torchvision==0.26.0 \
             || pip install torch==2.11.0 torchvision==0.26.0
 
-      - name: Install the app
-        run: pip install -r requirements.txt
+      - name: Install the app + impersonation support
+        run: |
+          pip install -r requirements.txt
+          pip install -U "yt-dlp[default]" "curl_cffi<0.13"
 
       - name: Install Deno (YouTube needs it for JS challenges / PO tokens)
         run: |
