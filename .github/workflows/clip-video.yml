@@ -80,6 +80,12 @@ jobs:
           pip install -r requirements.txt
           pip install -U "yt-dlp[default]" "curl_cffi<0.13"
 
+      - name: Install Deno (YouTube needs it for JS challenges / PO tokens)
+        run: |
+          curl -fsSL https://deno.land/install.sh | sh
+          echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
+          deno --version
+
       - name: Clip the video 🎬
         run: |
           sudo mkdir -p /app && sudo chmod 777 /app
