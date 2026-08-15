@@ -8,7 +8,6 @@
 #        Name: OPENROUTER_API_KEY   (or GEMINI_API_KEY / GROQ_API_KEY / ...)
 #      Also add your YouTube cookies as a secret named YOUTUBE_COOKIES
 #      (exported from Kiwi with the "Get cookies.txt LOCALLY" extension).
-#      Optional but recommended: your phone-tunnel URL as a secret PROXY_URL.
 #   2. Run the workflow:
 #        repo → Actions → "Clip a video" → Run workflow →
 #        paste your YouTube/Kick/Twitch link → Run
@@ -66,6 +65,11 @@ jobs:
       # your phone's home IP, so YouTube never sees the Azure datacenter IP
       # and the bot-wall disappears. Add as a repo secret named PROXY_URL.
       PROXY_URL: ${{ secrets.PROXY_URL }}
+      # PO-token provider (bgutil) — mints Proof-of-Origin tokens ON the runner
+      # itself (no phone needed) so yt-dlp can pass YouTube's bot check even
+      # from flagged Azure IPs. The workflow clones + builds it automatically;
+      # this just points main.py at the built script.
+      BGUTIL_SCRIPT_PATH: ${{ github.workspace }}/bgutil-ytdlp-pot-provider/server/src/generate_once.ts
       # Any free AI key you've stored as a repo secret is passed through.
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -111,13 +115,20 @@ jobs:
       - name: Install the app + impersonation support
         run: |
           pip install -r requirements.txt
-          pip install -U "yt-dlp[default]" "curl_cffi<0.13"
+          pip install -U "yt-dlp[default]" "curl_cffi<0.13" bgutil-ytdlp-pot-provider
 
       - name: Install Deno (YouTube needs it for JS challenges / PO tokens)
         run: |
           curl -fsSL https://deno.land/install.sh | sh
           echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
           "$HOME/.deno/bin/deno" --version
+
+      - name: Install PO-token provider (bgutil) — mints tokens to pass the bot check
+        run: |
+          git clone --depth 1 --branch 1.3.1 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git
+          cd bgutil-ytdlp-pot-provider/server
+          deno install --allow-scripts=npm:canvas --frozen
+          test -f src/generate_once.ts && echo "✅ bgutil PO-token script ready"
 
       - name: Clip the video 🎬
         run: |
