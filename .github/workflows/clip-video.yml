@@ -6,6 +6,8 @@
 #   1. (Once) Add your free AI key as a repository secret:
 #        repo → Settings → Secrets and variables → Actions → New repository secret
 #        Name: OPENROUTER_API_KEY   (or GEMINI_API_KEY / GROQ_API_KEY / ...)
+#      Also add your YouTube cookies as a secret named YOUTUBE_COOKIES
+#      (exported from Kiwi with the "Get cookies.txt LOCALLY" extension).
 #   2. Run the workflow:
 #        repo → Actions → "Clip a video" → Run workflow →
 #        paste your YouTube/Kick/Twitch link → Run
@@ -54,6 +56,10 @@ jobs:
       WHISPER_MODEL: ${{ inputs.whisper_model }}
       WHISPER_COMPUTE: int8
       MAX_CONCURRENT_JOBS: 1
+      # Your YouTube cookies (exported from Kiwi browser). REQUIRED — without
+      # them YouTube blocks GitHub's datacenter IPs with "Sign in to confirm
+      # you're not a bot". Add as a repo secret named YOUTUBE_COOKIES.
+      YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
       # Any free AI key you've stored as a repo secret is passed through.
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
