@@ -82,6 +82,7 @@ jobs:
 
       - name: Clip the video 🎬
         run: |
+          sudo mkdir -p /app && sudo chmod 777 /app
           mkdir -p output
           python -u main.py -u "${{ inputs.video_url }}" \
             -o output --format "${{ inputs.output_format }}"
