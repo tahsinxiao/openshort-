@@ -5,6 +5,8 @@ torch==2.11.0
 torchvision==0.26.0
 tqdm==4.67.3
 yt-dlp
+# Lets yt-dlp impersonate a real Chrome browser (fixes YouTube "not a bot" / Kick 403)
+curl_cffi==0.12.0
 faster-whisper==1.2.1
 py3langid==0.3.0
 python-dotenv==1.2.2
