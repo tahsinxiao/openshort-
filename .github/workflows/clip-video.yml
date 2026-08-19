@@ -56,8 +56,6 @@ jobs:
       WHISPER_MODEL: ${{ inputs.whisper_model }}
       WHISPER_COMPUTE: int8
       MAX_CONCURRENT_JOBS: 1
-      CLIP_TARGET_MIN: 2
-      CLIP_TARGET_MAX: 2
       # Your YouTube cookies (exported from Kiwi browser). REQUIRED — without
       # them YouTube blocks GitHub's datacenter IPs with "Sign in to confirm
       # you're not a bot". Add as a repo secret named YOUTUBE_COOKIES.
