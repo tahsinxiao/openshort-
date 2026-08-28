@@ -315,33 +315,41 @@ def configured_providers() -> List[str]:
 # --------------------------------------------------------------------------- #
 # Failure memory — automatic switching when a provider gets limited
 # --------------------------------------------------------------------------- #
-def _cooldown_seconds(provider: str) -> float:
-    state = _FAILURES.get(provider)
+def _failure_key(provider: str, model: str = "", api_key: str = "") -> str:
+    """Scope cooldown to a provider/model/key combination."""
+    key_fingerprint = api_key[-8:] if api_key else "none"
+    return f"{provider}:{model}:{key_fingerprint}"
+
+
+def _cooldown_seconds(provider: str, model: str = "", api_key: str = "") -> float:
+    state = _FAILURES.get(_failure_key(provider, model, api_key))
     if not state:
         return 0.0
     return max(0.0, state.get("until", 0.0) - time.time())
 
 
-def provider_in_cooldown(provider: str) -> bool:
-    return _cooldown_seconds(provider) > 0
+def provider_in_cooldown(provider: str, model: str = "", api_key: str = "") -> bool:
+    return _cooldown_seconds(provider, model, api_key) > 0
 
 
-def _mark_failure(provider: str) -> None:
-    state = _FAILURES.setdefault(provider, {"count": 0, "until": 0.0})
+def _mark_failure(provider: str, model: str = "", api_key: str = "") -> None:
+    failure_key = _failure_key(provider, model, api_key)
+    state = _FAILURES.setdefault(failure_key, {"count": 0, "until": 0.0})
     state["count"] = int(state.get("count", 0)) + 1
     delay = min(_COOLDOWN_MAX_SECONDS,
                 _COOLDOWN_BASE_SECONDS * (2 ** (state["count"] - 1)))
     state["until"] = time.time() + delay
-    print(f"⚠️ [ai_gateway] {provider} limited — skipping it for "
+    print(f"⚠️ [ai_gateway] {provider}/{model} limited — retrying after "
           f"{int(delay)}s (failures={state['count']})")
 
 
-def _mark_success(provider: str) -> None:
-    if provider in _FAILURES:
-        state = _FAILURES[provider]
+def _mark_success(provider: str, model: str = "", api_key: str = "") -> None:
+    failure_key = _failure_key(provider, model, api_key)
+    if failure_key in _FAILURES:
+        state = _FAILURES[failure_key]
         state["count"] = max(0, int(state.get("count", 0)) - 1)
         if state["count"] == 0:
-            _FAILURES.pop(provider, None)
+            _FAILURES.pop(failure_key, None)
 
 
 def provider_status() -> Dict[str, Dict[str, Any]]:
@@ -351,11 +359,15 @@ def provider_status() -> Dict[str, Dict[str, Any]]:
         keys = provider_keys(provider)
         if not keys:
             continue
-        state = _FAILURES.get(provider)
+        states = [state for failure_key, state in _FAILURES.items()
+                  if failure_key.startswith(provider + ":")]
         out[provider] = {
             "keys": len(keys),
-            "cooldown": round(_cooldown_seconds(provider), 1),
-            "failures": int((state or {}).get("count", 0)),
+            "cooldown": round(max(
+                (max(0.0, state.get("until", 0.0) - time.time())
+                 for state in states),
+                default=0.0), 1),
+            "failures": sum(int(state.get("count", 0)) for state in states),
         }
     return out
 
@@ -540,16 +552,24 @@ def _chat_completion(
     with httpx.Client(timeout=timeout) as client:
         resp = client.post(url, headers=headers, json=body)
         if resp.status_code in _TRANSIENT_STATUS:
-            resp.raise_for_status()  # caller retries on transient
+            retry_after = resp.headers.get("Retry-After", "")
+            detail = resp.text[:500].replace("\\n", " ")
+            raise RuntimeError(
+                f"{provider}/{model} HTTP {resp.status_code}"
+                f"{(' Retry-After=' + retry_after) if retry_after else ''}: {detail}")
         if resp.status_code >= 400:
             # Some models reject response_format — retry without JSON mode.
             if json_mode and resp.status_code in (400, 404, 422):
                 body.pop("response_format", None)
                 resp = client.post(url, headers=headers, json=body)
                 if resp.status_code >= 400:
-                    resp.raise_for_status()
+                    detail = resp.text[:500].replace("\\n", " ")
+                    raise RuntimeError(
+                        f"{provider}/{model} HTTP {resp.status_code}: {detail}")
             else:
-                resp.raise_for_status()
+                detail = resp.text[:500].replace("\\n", " ")
+                raise RuntimeError(
+                    f"{provider}/{model} HTTP {resp.status_code}: {detail}")
         data = resp.json()
 
     text = ""
@@ -602,8 +622,8 @@ def complete(
     tried = 0
 
     for provider, model, api_key in chain:
-        if provider_in_cooldown(provider):
-            continue  # auto-switch: skip providers that were just limited
+        if provider_in_cooldown(provider, model, api_key):
+            continue  # skip only this provider/model/key combination
         tried += 1
         attempts = 2
         for attempt in range(1, attempts + 1):
@@ -615,7 +635,7 @@ def complete(
                 )
                 if json_mode and not _parse_json_text(result.text):
                     raise ValueError("JSON mode: answer did not parse as JSON")
-                _mark_success(provider)
+                _mark_success(provider, model, api_key)
                 return result
             except Exception as e:  # noqa: BLE001 - fall through the chain
                 last_error = e
@@ -627,15 +647,17 @@ def complete(
                     "Overloaded", "overloaded",
                 ))
                 if transient:
-                    _mark_failure(provider)
+                    _mark_failure(provider, model, api_key)
                     if attempt < attempts:
                         time.sleep(2.0 * attempt)
                         continue
                 break  # next provider
 
+    skipped = len(chain) - tried
     raise AIGatewayError(
-        f"All {len(chain)} AI provider(s) failed"
-        f" ({tried} tried). Last error: {last_error}")
+        f"AI providers failed: {len(chain)} configured entries, {tried} tried, "
+        f"{skipped} skipped by cooldown. Last error: {last_error}. "
+        "Check provider status, key validity, and rate-limit headers.")
 
 
 def complete_json(

@@ -4,9 +4,12 @@ ultralytics==8.4.46
 torch==2.11.0
 torchvision==0.26.0
 tqdm==4.67.3
-yt-dlp
+# Pin the last verified YouTube extractor version; update deliberately with a smoke test.
+yt-dlp==2026.8.19
 # Lets yt-dlp impersonate a real Chrome browser (fixes YouTube "not a bot" / Kick 403)
 curl_cffi==0.12.0
+# Keep the yt-dlp PO-token plugin matched with the workflow provider source.
+bgutil-ytdlp-pot-provider==1.3.2
 faster-whisper==1.2.1
 py3langid==0.3.0
 python-dotenv==1.2.2

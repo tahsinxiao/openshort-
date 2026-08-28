@@ -41,6 +41,12 @@ on:
         default: 'vertical'
         type: choice
         options: ['vertical', 'square', 'horizontal']
+      caption_theme:
+        description: 'Subtitle style'
+        required: false
+        default: 'shorts'
+        type: choice
+        options: ['shorts', 'clean', 'creator', 'high-impact', 'minimal', 'classic']
 
 # Never run two clipping jobs at once (they share the runner budget).
 concurrency:
@@ -55,6 +61,8 @@ jobs:
     env:
       WHISPER_MODEL: ${{ inputs.whisper_model }}
       WHISPER_COMPUTE: int8
+      CAPTION_THEME: ${{ inputs.caption_theme }}
+      FREE_MODEL_AUTODISCOVERY: '0'
       MAX_CONCURRENT_JOBS: 1
       # Your YouTube cookies (exported from Kiwi browser). REQUIRED — without
       # them YouTube blocks GitHub's datacenter IPs with "Sign in to confirm
@@ -115,7 +123,7 @@ jobs:
       - name: Install the app + impersonation support
         run: |
           pip install -r requirements.txt
-          pip install -U "yt-dlp[default]" "curl_cffi<0.13" bgutil-ytdlp-pot-provider
+          pip install -U "yt-dlp[default]==2026.8.19" "curl_cffi==0.12.0" "bgutil-ytdlp-pot-provider==1.3.2"
 
       - name: Install Deno (YouTube needs it for JS challenges / PO tokens)
         run: |
@@ -123,9 +131,16 @@ jobs:
           echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
           "$HOME/.deno/bin/deno" --version
 
+      - name: Install bundled subtitle font
+        run: |
+          mkdir -p "$HOME/.local/share/fonts"
+          cp fonts/Anton-Regular.ttf "$HOME/.local/share/fonts/"
+          fc-cache -f
+          fc-match Anton
+
       - name: Install PO-token provider (bgutil) — mints tokens to pass the bot check
         run: |
-          git clone --depth 1 --branch 1.3.1 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git
+          git clone --depth 1 --branch 1.3.2 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git
           cd bgutil-ytdlp-pot-provider/server
           deno install --allow-scripts=npm:canvas --frozen
           test -f src/generate_once.ts && echo "✅ bgutil PO-token script ready"
