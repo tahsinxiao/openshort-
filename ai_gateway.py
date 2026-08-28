@@ -143,6 +143,7 @@ _TIMEOUT = httpx.Timeout(30.0, read=300.0)
 # retired the next refresh simply routes around it — no config edits.
 _FREE_MODELS_CACHE: Dict[str, Any] = {"at": 0.0, "text": [], "vision": []}
 _FREE_MODELS_TTL = 6 * 3600
+_FREE_CATALOG_RETRIES = 3
 FREE_MODEL_AUTODISCOVERY = os.environ.get(
     "FREE_MODEL_AUTODISCOVERY", "1").strip().lower() in ("1", "true", "yes")
 
@@ -394,19 +395,39 @@ def discover_openrouter_free_models(key: Optional[str] = None,
     key = key or provider_key("openrouter")
     if not key:
         return []
-    try:
-        resp = httpx.get(
-            "https://openrouter.ai/api/v1/models",
-            headers={"Authorization": f"Bearer {key}"},
-            timeout=httpx.Timeout(20.0),
-        )
-        resp.raise_for_status()
-        models = resp.json().get("data") or []
-    except Exception as e:
-        print(f"⚠️ [ai_gateway] OpenRouter catalog fetch failed: {e}")
+    models = None
+    last_error = None
+    for attempt in range(1, _FREE_CATALOG_RETRIES + 1):
+        try:
+            resp = httpx.get(
+                "https://openrouter.ai/api/v1/models",
+                headers={"Authorization": f"Bearer {key}"},
+                timeout=httpx.Timeout(20.0),
+            )
+            if resp.status_code in _TRANSIENT_STATUS:
+                retry_after = resp.headers.get("Retry-After", "")
+                raise RuntimeError(
+                    f"HTTP {resp.status_code}"
+                    f"{(' Retry-After=' + retry_after) if retry_after else ''}")
+            resp.raise_for_status()
+            models = resp.json().get("data") or []
+            break
+        except Exception as e:
+            last_error = e
+            if attempt < _FREE_CATALOG_RETRIES:
+                time.sleep(float(attempt))
+    if models is None:
+        stale = cached.get(kind) or []
+        if stale:
+            print(f"⚠️ [ai_gateway] OpenRouter catalog unavailable ({last_error}); "
+                  f"using {len(stale)} cached model(s).")
+            return stale[:limit]
+        print(f"⚠️ [ai_gateway] OpenRouter catalog fetch failed after "
+              f"{_FREE_CATALOG_RETRIES} attempts: {last_error}")
         return []
 
     free_text, free_vision = [], []
+    seen_text, seen_vision = set(), set()
     for m in models:
         mid = str(m.get("id") or "")
         pricing = m.get("pricing") or {}
@@ -424,6 +445,12 @@ def discover_openrouter_free_models(key: Optional[str] = None,
         arch = m.get("architecture") or {}
         modalities = [str(x).lower() for x in arch.get("input_modalities", [])]
         is_vision = any(mm in modalities for mm in ("image", "video"))
+        if not mid:
+            continue
+        target = seen_vision if is_vision else seen_text
+        if mid in target:
+            continue
+        target.add(mid)
         entry = (int(m.get("order") or 999999), mid)
         (free_vision if is_vision else free_text).append(entry)
 
@@ -436,6 +463,8 @@ def discover_openrouter_free_models(key: Optional[str] = None,
     }
     print(f"✅ [ai_gateway] Discovered {len(free_text)} free text + "
           f"{len(free_vision)} free vision models on OpenRouter")
+    print(f"   Live model order: "
+          f"{', '.join(_FREE_MODELS_CACHE['vision' if kind == 'vision' else 'text'][:limit])}")
     return (_FREE_MODELS_CACHE["vision"] if kind == "vision"
             else _FREE_MODELS_CACHE["text"])[:limit]
 

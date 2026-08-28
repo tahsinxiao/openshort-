@@ -199,3 +199,70 @@ class _FakeResp:
 
     def json(self):
         return self._payload
+
+
+def test_live_catalog_filters_and_deduplicates(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or")
+    ai_gateway._FREE_MODELS_CACHE = {"at": 0.0, "text": [], "vision": []}
+    payload = {
+        "data": [
+            {"id": "valid/text:free", "pricing": {"prompt": "0", "completion": "0"},
+             "architecture": {"input_modalities": ["text"]}, "order": 2},
+            {"id": "valid/text:free", "pricing": {"prompt": "0", "completion": "0"},
+             "architecture": {"input_modalities": ["text"]}, "order": 3},
+            {"id": "paid/model", "pricing": {"prompt": "1", "completion": "1"},
+             "architecture": {"input_modalities": ["text"]}, "order": 1},
+            {"id": "valid/vision:free", "pricing": {"prompt": "0", "completion": "0"},
+             "architecture": {"input_modalities": ["text", "image"]}, "order": 1},
+        ]
+    }
+
+    class Response:
+        status_code = 200
+        headers = {}
+
+        def json(self):
+            return payload
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(ai_gateway.httpx, "get", lambda *a, **k: Response())
+    assert ai_gateway.discover_openrouter_free_models(kind="text", limit=10) == ["valid/text:free"]
+    assert ai_gateway.discover_openrouter_free_models(kind="vision", limit=10) == ["valid/vision:free"]
+
+
+def test_catalog_retry_uses_cache_when_openrouter_is_unavailable(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or")
+    ai_gateway._FREE_MODELS_CACHE = {
+        "at": 0.0, "text": ["cached/model:free"], "vision": []
+    }
+    monkeypatch.setattr(ai_gateway.time, "sleep", lambda *_: None)
+    calls = []
+
+    class Response:
+        status_code = 503
+        headers = {}
+        text = "temporarily unavailable"
+
+        def raise_for_status(self):
+            raise RuntimeError("503")
+
+    def fake_get(*args, **kwargs):
+        calls.append(1)
+        return Response()
+
+    monkeypatch.setattr(ai_gateway.httpx, "get", fake_get)
+    assert ai_gateway.discover_openrouter_free_models(kind="text", limit=10) == ["cached/model:free"]
+    assert len(calls) == 3
+
+
+class _FakeResp:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._payload
