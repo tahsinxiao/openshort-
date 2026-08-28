@@ -41,13 +41,13 @@ load_dotenv()
 ASPECT_RATIO = 9 / 16
 
 GEMINI_PROMPT_TEMPLATE = """
-You are a senior short-form video editor. Read the ENTIRE transcript and word-level timestamps to choose the 3–15 MOST VIRAL moments for TikTok/IG Reels/YouTube Shorts. Each clip must be between 15 and 60 seconds long.
+You are a senior short-form video editor. Read the ENTIRE transcript and word-level timestamps to choose EXACTLY TWO MOST VIRAL moments for TikTok/IG Reels/YouTube Shorts. For videos at least 120 seconds long, each clip must be between 59 and 60 seconds long.
 
 ⚠️ FFMPEG TIME CONTRACT — STRICT REQUIREMENTS:
 - Return timestamps in ABSOLUTE SECONDS from the start of the video (usable in: ffmpeg -ss <start> -to <end> -i <input> ...).
 - Only NUMBERS with decimal point, up to 3 decimals (examples: 0, 1.250, 17.350).
 - Ensure 0 ≤ start < end ≤ VIDEO_DURATION_SECONDS.
-- Each clip between 15 and 60 s (inclusive).
+- For videos at least 120 seconds, each clip must be between 59 and 60 s (inclusive).
 - Prefer starting 0.2–0.4 s BEFORE the hook and ending 0.2–0.4 s AFTER the payoff.
 - Use silence moments for natural cuts; never cut in the middle of a word or phrase.
 - STRICTLY FORBIDDEN to use time formats other than absolute seconds.
@@ -1198,10 +1198,32 @@ def _run_ai_stage(prompt, schema, temperature=0.2):
     return _run_gemini_stage(client, model_name, prompt, schema)
 
 
+def _fit_clip_duration(start, end, video_duration, min_seconds=59.0, max_seconds=60.0):
+    """Expand a clip around its hook/payoff to the requested Shorts length."""
+    duration = float(video_duration)
+    if duration <= 0:
+        return 0.0, 0.0
+    target_min = min(float(min_seconds), duration)
+    target_max = min(float(max_seconds), duration)
+    start = max(0.0, min(float(start), duration))
+    end = max(start, min(float(end), duration))
+    if end - start < target_min:
+        center = (start + end) / 2.0
+        length = target_max
+        start = max(0.0, min(center - length / 2.0, duration - length))
+        end = min(duration, start + length)
+    if end - start > target_max:
+        end = min(duration, start + target_max)
+    if end - start < target_min:
+        start = max(0.0, duration - target_min)
+        end = duration
+    return round(start, 3), round(end, 3)
+
+
 def _fallback_transcript_clips(transcript_result, video_duration):
     """Return usable, diverse clips when AI selection is unavailable."""
     windows = build_transcript_windows(transcript_result, video_duration)
-    target = max(3, min(8, int(video_duration // 90) + 2))
+    target = 2 if float(video_duration) >= 60.0 else 1
     ranked = sorted(windows, key=lambda w: len(str(w.get("text", ""))), reverse=True)
     chosen = []
     for window in ranked:
@@ -1220,7 +1242,8 @@ def _fallback_transcript_clips(transcript_result, video_duration):
     for index, window in enumerate(sorted(chosen, key=lambda w: float(w.get("start", 0)))):
         start = max(0.0, float(window.get("start", 0.0)))
         end = min(float(video_duration), float(window.get("end", start + 1.0)))
-        if end - start < 1.0:
+        start, end = _fit_clip_duration(start, end, video_duration)
+        if end - start < min(59.0, float(video_duration)):
             continue
         shorts.append({
             "start": start,
@@ -1279,7 +1302,7 @@ def get_viral_clips(transcript_result, video_duration):
         # Shortlist the top windows; scale with duration so long videos surface
         # more candidates without exploding the detail call.
         scored.sort(key=lambda w: w.get("score", 0), reverse=True)
-        target = max(3, min(10, int(video_duration // 90) + 2))
+        target = min(8, max(2, len(windows)))
         by_id = {w["id"]: w for w in windows}
         shortlist = [by_id[w["id"]] for w in scored[:target] if w.get("id") in by_id]
         if not shortlist:
@@ -1298,10 +1321,25 @@ def get_viral_clips(transcript_result, video_duration):
             costs.append(cost)
 
         shorts = detail.get("shorts") or []
-        # Snap each proposed clip onto real word boundaries (+ a bit of silence).
+        # Snap each proposed clip onto real word boundaries, then enforce the
+        # publication target of two 59–60 second Shorts.
+        min_seconds = min(59.0, float(video_duration))
         for s in shorts:
-            ns, ne = snap_clip_to_words(s.get("start", 0), s.get("end", 0), words, video_duration)
-            s["start"], s["end"] = ns, ne
+            ns, ne = snap_clip_to_words(
+                s.get("start", 0), s.get("end", 0), words, video_duration,
+                min_duration=min_seconds, max_duration=min(60.0, float(video_duration)))
+            s["start"], s["end"] = _fit_clip_duration(
+                ns, ne, video_duration, min_seconds=min_seconds,
+                max_seconds=min(60.0, float(video_duration)))
+        shorts = sorted(shorts, key=lambda s: s.get("predicted_score", 0), reverse=True)[:2]
+        if len(shorts) < (2 if float(video_duration) >= 60.0 else 1):
+            backup = _fallback_transcript_clips(transcript_result, video_duration)["shorts"]
+            for candidate in backup:
+                if len(shorts) >= (2 if float(video_duration) >= 60.0 else 1):
+                    break
+                if all(abs(float(candidate["start"]) - float(existing["start"])) >= 12.0
+                       for existing in shorts):
+                    shorts.append(candidate)
 
         # Aggregate cost across both passes (free tiers: $0.00).
         cost_analysis = None
@@ -1359,13 +1397,19 @@ def get_visual_clips(video_path, video_duration, language="en"):
                 system=_AI_SYSTEM_PROMPT, user=prompt, temperature=0.2,
                 images=frames, kind="vision")
             shorts = parsed.get("shorts") or []
-            # Clamp to the real duration; drop anything degenerate.
+            # Clamp and expand to the publication target, then keep the two
+            # strongest distinct moments for YouTube Shorts.
             clean = []
+            min_seconds = min(59.0, float(video_duration))
             for s in shorts:
-                s["start"] = max(0.0, float(s.get("start", 0)))
-                s["end"] = min(float(video_duration), float(s.get("end", 0)))
-                if s["end"] - s["start"] >= 1.0:
+                start, end = _fit_clip_duration(
+                    s.get("start", 0), s.get("end", 0), video_duration,
+                    min_seconds=min_seconds,
+                    max_seconds=min(60.0, float(video_duration)))
+                if end - start >= min_seconds:
+                    s["start"], s["end"] = start, end
                     clean.append(s)
+            clean = sorted(clean, key=lambda s: s.get("predicted_score", 0), reverse=True)[:2]
             if not clean:
                 print("⚠️ Vision pass returned no usable clips.")
                 return None

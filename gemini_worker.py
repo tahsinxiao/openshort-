@@ -63,16 +63,17 @@ class VisualResponse(BaseModel):
 
 VISUAL_PROMPT_TEMPLATE = """
 You are a senior short-form video editor. This video has NO speech/audio — judge
-it purely by what you SEE. Watch the whole thing and pick the 3–15 MOST engaging
-visual moments for TikTok / Reels / Shorts (action, reveals, transformations,
+it purely by what you SEE. Watch the whole thing and pick the BEST TWO
+engaging moments for TikTok / Reels / Shorts (action, reveals, transformations,
 striking or funny shots, satisfying payoffs, dramatic movement).
 
 TIME CONTRACT — STRICT:
 - Timestamps in ABSOLUTE SECONDS from the start (usable with ffmpeg -ss/-to).
 - Only numbers with up to 3 decimals (e.g. 0, 12.5, 47.250).
 - 0 <= start < end <= {video_duration}.
-- Each clip 15 to 60 seconds long. If the whole video is shorter than 15s,
-  return one clip spanning the full video.
+- For videos at least 120 seconds long, return EXACTLY TWO clips, each 59 to 60
+  seconds long. If the whole video is shorter than 120s, use the longest two
+  distinct clips that fit the available duration.
 - Cut on visual scene changes, never mid-motion.
 
 For each clip write catchy copy in {language} (a scroll-stopping hook, a TikTok
@@ -241,8 +242,11 @@ Choose the BEST short clips from these shortlisted candidate windows.
 
 CLIP RULES:
 - Return only valid JSON.
-- Each clip must be 15 to 60 seconds long, in absolute seconds from the start of the source video.
-- Stay within the candidate window boundaries.
+- Return EXACTLY TWO clips when the source video is at least 120 seconds long.
+- Each clip must be 59 to 60 seconds long, in absolute seconds from the start of
+  the source video. For shorter videos, use the longest valid clips possible.
+- Stay within the candidate window boundaries where possible; the renderer will
+  align the final boundaries to speech and the requested duration.
 - THE 2-SECOND RULE: the clip MUST open on its strongest moment. If the first
   2 seconds would not stop a cold viewer from scrolling, move the start or skip the clip.
 - Start slightly before the hook and end slightly after the payoff when possible.
@@ -254,13 +258,13 @@ CLIP RULES:
   A brilliant moment that needs the previous five minutes is not a clip.
   Fix this by moving the START earlier, never by cutting the ending short: a
   clip that loses its payoff to gain context has traded down.
-- HOW MANY: return {min_clips} to {max_clips} clips. Work through EVERY candidate
-  window — they were already scored as the best moments in the video, so a window
-  that yields nothing should be the exception, not the norm. Two or three clips
-  from one window are fine when they are genuinely different moments. The rules
-  above let you skip a weak clip; they are not a licence to return one clip and
-  stop. Only fall short of {min_clips} when the material truly does not hold
-  them, and never pad with a clip you would not publish yourself.
+- HOW MANY: return exactly {min_clips} to {max_clips} clips. For this workflow,
+  that means exactly two. Rank candidates using a retention score: opening hook
+  strength in the first 2 seconds (30%), standalone context (20%), emotional or
+  surprising payoff (20%), sustained information density (15%), and replay,
+  comment, or share potential (15%). Choose two DIFFERENT moments with their own
+  hooks and payoffs. Never pad with dead air, an intro, sponsorship, or a clip
+  that needs the previous five minutes of context.
 - DIVERSITY: never return two clips that make the same point, tell the same
   story, or land the same joke — even across different windows. Pick the
   stronger one and drop the other. Two clips on the same broad topic are fine
@@ -278,7 +282,9 @@ COPY RULES — ALL text fields (descriptions, title, hook) MUST be written in TR
 - Descriptions (TikTok + Instagram): 1-2 punchy sentences that tease the payoff
   without spoiling it, then 3-5 topically relevant hashtags. No generic hashtag spam.
 - `video_title_for_youtube_short`: max 100 chars, curiosity-driven, no fake claims.
-- `predicted_score`: honest 0-100 estimate of viral potential.
+- `predicted_score`: honest 0-100 estimate of viral potential. Prefer clips
+  scoring 70+; if neither candidate reaches 70, return the two strongest options
+  and explain the tradeoff in the description.
 
 TRANSCRIPT_LANGUAGE: {language}
 VIDEO_DURATION_SECONDS: {video_duration}
