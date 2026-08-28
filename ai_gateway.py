@@ -110,7 +110,6 @@ DEFAULT_TEXT_CHAIN = (
     "openrouter:openai/gpt-oss-20b:free,"
     "openrouter:google/gemma-4-31b-it:free,"
     "openrouter:qwen/qwen3-32b:free,"
-    "openrouter:z-ai/glm-4.5-air:free,"
     "groq:llama-3.3-70b-versatile,"
     "zhipu:glm-4.5-air,"
     "deepseek:deepseek-chat,"
