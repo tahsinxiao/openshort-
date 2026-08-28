@@ -133,11 +133,10 @@ def test_multiple_keys_expand_the_chain(monkeypatch):
     assert len([e for e in chain if e[0] == "groq"]) == 1
 
 
-def test_failure_cooldown_skips_provider(monkeypatch):
+def test_failure_cooldown_is_model_scoped(monkeypatch):
     monkeypatch.setenv("FREE_MODEL_AUTODISCOVERY", "0")
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or")
-    monkeypatch.setenv("GROQ_API_KEY", "sk-groq")
-    monkeypatch.setenv("AI_MODEL_CHAIN", "openrouter:bad:free,groq:llama-3.3-70b-versatile")
+    monkeypatch.setenv("AI_MODEL_CHAIN", "openrouter:bad:free,openrouter:good:free")
     calls = []
 
     def handler(request):
@@ -151,21 +150,14 @@ def test_failure_cooldown_skips_provider(monkeypatch):
             "model": body["model"],
         })
 
-    monkeypatch.setattr(ai_gateway.httpx, "Client",
-                        _mock_client(handler))
-    # First call: openrouter 429s, cooldown starts, groq answers.
+    monkeypatch.setattr(ai_gateway.httpx, "Client", _mock_client(handler))
     parsed, result = ai_gateway.complete_json(system="s", user="u")
-    assert result.provider == "groq"
-    assert ai_gateway.provider_in_cooldown("openrouter") is True
-    assert ai_gateway.provider_status()["openrouter"]["failures"] >= 1
-
-    # Second call: openrouter is skipped entirely — only groq is tried.
-    import time as _real_time
-    monkeypatch.setattr(ai_gateway.time, "sleep", lambda *_: None)
-    ai_gateway._FAILURES["openrouter"]["until"] = _real_time.time() + 999
-    calls.clear()
-    ai_gateway.complete_json(system="s", user="u")
-    assert all(not m.startswith("bad") for m in calls), "cooldown provider must be skipped"
+    assert parsed == {"ok": 1}
+    assert result.provider == "openrouter"
+    assert calls[0].startswith("bad")
+    assert calls[-1].startswith("good")
+    assert ai_gateway.provider_in_cooldown("openrouter", "bad:free", "sk-or") is True
+    assert ai_gateway.provider_in_cooldown("openrouter", "good:free", "sk-or") is False
 
 
 def test_free_model_filter_never_includes_paid(monkeypatch):

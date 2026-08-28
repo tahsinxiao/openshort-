@@ -268,6 +268,21 @@ CAPTION_THEMES = {
         "border_width": 2, "effect": "pop", "base_opacity": 0.7,
         "uppercase": False,
     },
+    "clean": {
+        "font_name": "Liberation Sans", "highlight_color": "#FFFFFF",
+        "border_width": 2, "effect": "none", "base_opacity": 1.0,
+        "uppercase": False,
+    },
+    "creator": {
+        "font_name": "Anton", "highlight_color": "#FFD700",
+        "border_width": 4, "effect": "pop", "base_opacity": 1.0,
+        "uppercase": True,
+    },
+    "high-impact": {
+        "font_name": "Anton", "highlight_color": "#FFE500",
+        "border_width": 5, "effect": "pop", "base_opacity": 1.0,
+        "uppercase": True,
+    },
     "gold": {
         "font_name": "Verdana", "highlight_color": "#FFD700",
         "border_width": 2, "effect": "glow", "base_opacity": 0.6,
