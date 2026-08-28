@@ -1198,6 +1198,40 @@ def _run_ai_stage(prompt, schema, temperature=0.2):
     return _run_gemini_stage(client, model_name, prompt, schema)
 
 
+def _fallback_transcript_clips(transcript_result, video_duration):
+    """Return usable, diverse clips when AI selection is unavailable."""
+    windows = build_transcript_windows(transcript_result, video_duration)
+    target = max(3, min(8, int(video_duration // 90) + 2))
+    ranked = sorted(windows, key=lambda w: len(str(w.get("text", ""))), reverse=True)
+    chosen = []
+    for window in ranked:
+        if all(abs(float(window["start"]) - float(old["start"])) >= 12.0
+               for old in chosen):
+            chosen.append(window)
+        if len(chosen) >= target:
+            break
+    if not chosen:
+        segment_len = min(45.0, max(15.0, video_duration / max(target, 1)))
+        chosen = [{"start": i * segment_len,
+                   "end": min(video_duration, (i + 1) * segment_len),
+                   "text": ""}
+                  for i in range(max(1, min(target, int(video_duration // segment_len) or 1)))]
+    shorts = []
+    for index, window in enumerate(sorted(chosen, key=lambda w: float(w.get("start", 0)))):
+        start = max(0.0, float(window.get("start", 0.0)))
+        end = min(float(video_duration), float(window.get("end", start + 1.0)))
+        if end - start < 1.0:
+            continue
+        shorts.append({
+            "start": start,
+            "end": end,
+            "video_title_for_youtube_short": f"Clip {index + 1}",
+            "viral_hook_text": str(window.get("text", ""))[:80],
+            "selection_mode": "deterministic-fallback",
+        })
+    return {"shorts": shorts, "selection_mode": "deterministic-fallback"} if shorts else None
+
+
 def get_viral_clips(transcript_result, video_duration):
     """Two-pass clip selection: score transcript windows, then detail the best.
 
@@ -1211,8 +1245,8 @@ def get_viral_clips(transcript_result, video_duration):
     """
     print("\U0001f916  Analyzing with free AI (2-pass: score → detail)...")
     if not ai_gateway.is_configured() and not os.getenv("GEMINI_API_KEY"):
-        print("❌ Error: no AI provider configured in environment variables.")
-        return None
+        print("⚠️ No AI provider configured — using deterministic transcript clips.")
+        return _fallback_transcript_clips(transcript_result, video_duration)
 
     language = str(transcript_result.get('language') or 'unknown')
     print(f"\U0001f916  Language: {language}")
@@ -1298,7 +1332,8 @@ def get_viral_clips(transcript_result, video_duration):
         raise
     except Exception as e:
         print(f"❌ AI Error: {e}")
-        return None
+        print("⚠️ AI selection unavailable — using deterministic transcript clips.")
+        return _fallback_transcript_clips(transcript_result, video_duration)
 
 
 def get_visual_clips(video_path, video_duration, language="en"):
@@ -1523,7 +1558,7 @@ if __name__ == '__main__':
             # wrote no metadata.json, so app.py marked the job failed anyway
             # (app.py:1087) after burning GPU on a render nobody could see.
             raise RuntimeError(
-                "Clip detection failed — Gemini did not return usable clips for this video.")
+                "Clip detection failed — neither AI nor deterministic fallback returned usable clips.")
         else:
             print(f"🔥 Found {len(clips_data['shorts'])} clips!")
 

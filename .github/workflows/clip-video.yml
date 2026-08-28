@@ -62,7 +62,8 @@ jobs:
       WHISPER_MODEL: ${{ inputs.whisper_model }}
       WHISPER_COMPUTE: int8
       CAPTION_THEME: ${{ inputs.caption_theme }}
-      FREE_MODEL_AUTODISCOVERY: '0'
+      # Refresh the free-model catalog so retired slugs are not used.
+      FREE_MODEL_AUTODISCOVERY: '1'
       MAX_CONCURRENT_JOBS: 1
       # Your YouTube cookies (exported from Kiwi browser). REQUIRED — without
       # them YouTube blocks GitHub's datacenter IPs with "Sign in to confirm
