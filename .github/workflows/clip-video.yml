@@ -87,6 +87,10 @@ jobs:
       ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
       DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
       MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+      # Produce two publication-ready YouTube Shorts per run.
+      CLIP_TARGET_MIN: 2
+      CLIP_TARGET_MAX: 2
+      MIN_CLIP_SECONDS: 59
 
     steps:
       - name: Check out the code
