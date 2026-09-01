@@ -44,9 +44,9 @@ on:
       caption_theme:
         description: 'Subtitle style'
         required: false
-        default: 'shorts'
+        default: 'professional'
         type: choice
-        options: ['shorts', 'clean', 'creator', 'high-impact', 'minimal', 'classic']
+        options: ['professional', 'clean', 'shorts', 'creator', 'high-impact', 'minimal', 'classic']
 
 # Never run two clipping jobs at once (they share the runner budget).
 concurrency:
