@@ -221,7 +221,7 @@ def generate_srt(transcript, clip_start, clip_end, output_path, max_chars=20, ma
 # and Reels' own bottom UI — the caption/username block and the music ticker —
 # where they were partly covered on the platform even though the exported file
 # looked fine.
-SAFE_MARGIN_V = 43
+SAFE_MARGIN_V = 52
 
 
 # The caption look applied automatically to every generated clip. Chosen by
@@ -234,17 +234,17 @@ SAFE_MARGIN_V = 43
 AUTO_CAPTION_STYLE = {
     "style": "karaoke",
     "alignment": "bottom",
-    "font_name": "Anton",
-    "font_size": 44,
+    "font_name": "Liberation Sans",
+    "font_size": 28,
     "font_color": "#FFFFFF",
-    "highlight_color": "#FFE500",
+    "highlight_color": "#FFE58F",
     "border_color": "#000000",
-    "border_width": 4,
-    "effect": "pop",
+    "border_width": 2,
+    "effect": "none",
     "base_opacity": 1.0,
-    "uppercase": True,
-    "max_chars": 16,
-    "max_duration": 1.4,
+    "uppercase": False,
+    "max_chars": 24,
+    "max_duration": 2.0,
 }
 
 
@@ -264,14 +264,22 @@ CAPTION_THEMES = {
         "uppercase": False,
     },
     "shorts": {
-        "font_name": "Verdana", "highlight_color": "#FF0000",
-        "border_width": 2, "effect": "pop", "base_opacity": 0.7,
-        "uppercase": False,
+        "font_name": "Verdana", "font_size": 28,
+        "highlight_color": "#FF0000", "border_width": 2,
+        "effect": "none", "base_opacity": 0.85,
+        "uppercase": False, "max_chars": 24, "max_duration": 2.0,
+    },
+    "professional": {
+        "font_name": "Liberation Sans", "font_size": 28,
+        "highlight_color": "#FFE58F", "border_width": 2,
+        "effect": "none", "base_opacity": 1.0,
+        "uppercase": False, "max_chars": 24, "max_duration": 2.0,
     },
     "clean": {
-        "font_name": "Liberation Sans", "highlight_color": "#FFFFFF",
-        "border_width": 2, "effect": "none", "base_opacity": 1.0,
-        "uppercase": False,
+        "font_name": "Liberation Sans", "font_size": 28,
+        "highlight_color": "#FFFFFF", "border_width": 2,
+        "effect": "none", "base_opacity": 1.0,
+        "uppercase": False, "max_chars": 24, "max_duration": 2.0,
     },
     "creator": {
         "font_name": "Anton", "highlight_color": "#FFD700",
