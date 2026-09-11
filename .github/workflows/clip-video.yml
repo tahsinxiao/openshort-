@@ -91,6 +91,12 @@ jobs:
       CLIP_TARGET_MIN: 2
       CLIP_TARGET_MAX: 2
       MIN_CLIP_SECONDS: 59
+      MAX_CLIP_SECONDS: 180
+      # Let the reframer choose crop, full-content, screen, split, or inset layout.
+      AUTO_LAYOUT: 1
+      # Preserve wide visual scenes with a full-width foreground over a blurred
+      # backdrop; close-ups still use subject-aware tracking/cropping.
+      FULL_FRAME_CONTENT: 1
 
     steps:
       - name: Check out the code

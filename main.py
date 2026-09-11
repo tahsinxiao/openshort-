@@ -1198,9 +1198,13 @@ def _run_ai_stage(prompt, schema, temperature=0.2):
     return _run_gemini_stage(client, model_name, prompt, schema)
 
 
-def _fit_clip_duration(start, end, video_duration, min_seconds=59.0, max_seconds=60.0):
-    """Expand a clip around its hook/payoff to the requested Shorts length."""
+def _fit_clip_duration(start, end, video_duration, min_seconds=None, max_seconds=None):
+    """Fit a clip to the Shorts duration contract without padding dead air."""
     duration = float(video_duration)
+    if min_seconds is None:
+        min_seconds = float(os.environ.get("MIN_CLIP_SECONDS", "59"))
+    if max_seconds is None:
+        max_seconds = float(os.environ.get("MAX_CLIP_SECONDS", "180"))
     if duration <= 0:
         return 0.0, 0.0
     target_min = min(float(min_seconds), duration)
@@ -1218,6 +1222,25 @@ def _fit_clip_duration(start, end, video_duration, min_seconds=59.0, max_seconds
         start = max(0.0, duration - target_min)
         end = duration
     return round(start, 3), round(end, 3)
+
+
+def _snap_clip_to_scene_cuts(start, end, scene_cuts, video_duration, tolerance=6.0):
+    """Move AI boundaries to nearby shot cuts without changing the idea."""
+    if not scene_cuts:
+        return round(float(start), 3), round(float(end), 3)
+    start = float(start)
+    end = float(end)
+    start_candidates = [cut for cut in scene_cuts if 0.0 <= cut < end]
+    end_candidates = [cut for cut in scene_cuts if start < cut <= float(video_duration)]
+    if start_candidates:
+        nearest = min(start_candidates, key=lambda cut: abs(cut - start))
+        if abs(nearest - start) <= tolerance:
+            start = nearest
+    if end_candidates:
+        nearest = min(end_candidates, key=lambda cut: abs(cut - end))
+        if abs(nearest - end) <= tolerance:
+            end = nearest
+    return round(max(0.0, start), 3), round(min(float(video_duration), end), 3)
 
 
 def _fallback_transcript_clips(transcript_result, video_duration):
@@ -1322,15 +1345,16 @@ def get_viral_clips(transcript_result, video_duration):
 
         shorts = detail.get("shorts") or []
         # Snap each proposed clip onto real word boundaries, then enforce the
-        # publication target of two 59–60 second Shorts.
-        min_seconds = min(59.0, float(video_duration))
+        # publication target of two clips up to three minutes long.
+        min_seconds = min(float(os.environ.get("MIN_CLIP_SECONDS", "59")), float(video_duration))
+        max_seconds = min(float(os.environ.get("MAX_CLIP_SECONDS", "180")), float(video_duration))
         for s in shorts:
             ns, ne = snap_clip_to_words(
                 s.get("start", 0), s.get("end", 0), words, video_duration,
-                min_duration=min_seconds, max_duration=min(60.0, float(video_duration)))
+                min_duration=min_seconds, max_duration=max_seconds)
             s["start"], s["end"] = _fit_clip_duration(
                 ns, ne, video_duration, min_seconds=min_seconds,
-                max_seconds=min(60.0, float(video_duration)))
+                max_seconds=max_seconds)
         shorts = sorted(shorts, key=lambda s: s.get("predicted_score", 0), reverse=True)[:2]
         if len(shorts) < (2 if float(video_duration) >= 60.0 else 1):
             backup = _fallback_transcript_clips(transcript_result, video_duration)["shorts"]
@@ -1400,8 +1424,10 @@ def get_visual_clips(video_path, video_duration, language="en"):
             # Clamp and expand to the publication target, then keep the two
             # strongest distinct moments for YouTube Shorts.
             clean = []
-            min_seconds = min(59.0, float(video_duration))
+            min_seconds = min(float(os.environ.get("MIN_CLIP_SECONDS", "59")), float(video_duration))
+            max_seconds = min(float(os.environ.get("MAX_CLIP_SECONDS", "180")), float(video_duration))
             for s in shorts:
+
                 start, end = _fit_clip_duration(
                     s.get("start", 0), s.get("end", 0), video_duration,
                     min_seconds=min_seconds,
@@ -1596,6 +1622,34 @@ if __name__ == '__main__':
             clips_data = get_viral_clips(transcript, duration)
         else:
             clips_data = get_visual_clips(input_video, duration)
+
+        if clips_data and clips_data.get('shorts'):
+            # Scene detection is used as a final editorial pass: the AI chooses
+            # the idea, then we move nearby boundaries to actual shot changes.
+            # This avoids cutting a visual payoff in half without letting scene
+            # detection override a strong hook by more than a few seconds.
+            scene_cuts = []
+            try:
+                detected_scenes, _scene_fps = detect_scenes(input_video)
+                scene_cuts = sorted({round(float(scene.get_seconds()), 3)
+                                     for pair in detected_scenes
+                                     for scene in pair})
+                print(f"   🎞️ Detected {len(scene_cuts)} scene boundaries for editorial snapping.")
+            except Exception as scene_error:
+                print(f"   ⚠️ Scene-boundary pass skipped ({scene_error}).")
+            min_clip_seconds = float(os.environ.get("MIN_CLIP_SECONDS", "59"))
+            max_clip_seconds = float(os.environ.get("MAX_CLIP_SECONDS", "180"))
+            for clip in clips_data['shorts']:
+                original_start, original_end = clip['start'], clip['end']
+                snapped_start, snapped_end = _snap_clip_to_scene_cuts(
+                    original_start, original_end, scene_cuts, duration)
+                fitted_start, fitted_end = _fit_clip_duration(
+                    snapped_start, snapped_end, duration,
+                    min_seconds=min_clip_seconds, max_seconds=max_clip_seconds)
+                clip['start'], clip['end'] = fitted_start, fitted_end
+                if (fitted_start, fitted_end) != (original_start, original_end):
+                    print(f"   ✂️ Editorial boundary pass: {original_start:.2f}-{original_end:.2f}"
+                          f" → {fitted_start:.2f}-{fitted_end:.2f}")
 
         if not clips_data or 'shorts' not in clips_data:
             # Deliberately fail instead of reframing the whole video: that path

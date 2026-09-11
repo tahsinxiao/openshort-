@@ -398,7 +398,14 @@ def render(input_video, final_output_video, aspect_ratio, content_ranges=None):
                 graph = split_layout.split_filtergraph(
                     orig_w, orig_h, out_w, out_h, left, right)
             elif strategy == 'GENERAL':
-                graph = general_filtergraph(out_w, out_h)
+                if os.environ.get("FULL_FRAME_CONTENT", "0").strip().lower() in ("1", "true", "yes"):
+                    # Keep the entire wide source visible; the blurred background
+                    # fills the vertical canvas without cropping the foreground.
+                    graph = general_filtergraph(
+                        out_w, out_h,
+                        full_width_content_height(orig_w, orig_h, out_w))
+                else:
+                    graph = general_filtergraph(out_w, out_h)
             else:
                 seg_xs = [x if x is not None else 0 for x in xs[start_f:end_f]]
                 cmd_path = os.path.join(workdir, f"cmd_{idx:03d}.txt")

@@ -71,9 +71,11 @@ TIME CONTRACT — STRICT:
 - Timestamps in ABSOLUTE SECONDS from the start (usable with ffmpeg -ss/-to).
 - Only numbers with up to 3 decimals (e.g. 0, 12.5, 47.250).
 - 0 <= start < end <= {video_duration}.
-- For videos at least 120 seconds long, return EXACTLY TWO clips, each 59 to 60
-  seconds long. If the whole video is shorter than 120s, use the longest two
-  distinct clips that fit the available duration.
+- For videos at least 120 seconds long, return EXACTLY TWO clips, each 59 to
+  180 seconds long. Prefer the longest duration that contains a complete idea,
+  scene sequence, or payoff; do not pad a strong moment with dead air. If the
+  source is shorter than 120s, use the longest two distinct complete moments
+  that fit the available duration.
 - Cut on visual scene changes, never mid-motion.
 
 For each clip write catchy copy in {language} (a scroll-stopping hook, a TikTok
@@ -243,10 +245,12 @@ Choose the BEST short clips from these shortlisted candidate windows.
 CLIP RULES:
 - Return only valid JSON.
 - Return EXACTLY TWO clips when the source video is at least 120 seconds long.
-- Each clip must be 59 to 60 seconds long, in absolute seconds from the start of
-  the source video. For shorter videos, use the longest valid clips possible.
+- Each clip must be 59 to 180 seconds long, in absolute seconds from the start
+  of the source video. Prefer a complete scene sequence and natural ending over
+  an arbitrary 60-second cutoff. For shorter videos, use the longest valid
+  complete clips possible.
 - Stay within the candidate window boundaries where possible; the renderer will
-  align the final boundaries to speech and the requested duration.
+  align final boundaries to speech and nearby scene cuts.
 - THE 2-SECOND RULE: the clip MUST open on its strongest moment. If the first
   2 seconds would not stop a cold viewer from scrolling, move the start or skip the clip.
 - Start slightly before the hook and end slightly after the payoff when possible.
