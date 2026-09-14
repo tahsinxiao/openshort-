@@ -72,6 +72,16 @@ class TestGenerateSrt:
 
 
 class TestStyleSanitizing:
+    def test_creator_theme_is_compact_and_high_contrast(self):
+        from subtitles import caption_theme
+        style = caption_theme("creator")
+        assert style["font_name"] == "Anton"
+        assert style["highlight_color"] == "#B7FF3C"
+        assert style["effect"] == "pop"
+        assert style["uppercase"] is True
+        assert style["max_chars"] == 22
+        assert style["max_duration"] == 1.6
+
     def test_invalid_hex_falls_back_to_white(self):
         assert hex_to_ass_color("#GGGGGG") == hex_to_ass_color("#FFFFFF")
         assert hex_to_ass_color("abc") == hex_to_ass_color("#FFFFFF")

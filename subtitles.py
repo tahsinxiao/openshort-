@@ -282,9 +282,14 @@ CAPTION_THEMES = {
         "uppercase": False, "max_chars": 24, "max_duration": 2.0,
     },
     "creator": {
-        "font_name": "Anton", "highlight_color": "#FFD700",
+        # OpusClip-style mobile captions: short, bold, high-contrast blocks
+        # with a bright active word. Keeping the block under ~1.6 seconds
+        # makes the highlight feel attached to the narration instead of
+        # lagging behind it on fast speech.
+        "font_name": "Anton", "highlight_color": "#B7FF3C",
         "border_width": 4, "effect": "pop", "base_opacity": 1.0,
-        "uppercase": True,
+        "uppercase": True, "font_size": 30, "max_chars": 22,
+        "max_duration": 1.6,
     },
     "high-impact": {
         "font_name": "Anton", "highlight_color": "#FFE500",
@@ -675,4 +680,3 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
         raise Exception(f"FFmpeg failed: {stderr_text}")
 
     return True
-

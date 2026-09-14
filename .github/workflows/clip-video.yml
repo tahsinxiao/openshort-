@@ -32,7 +32,7 @@ on:
       whisper_model:
         description: 'Whisper model — tiny = fast, base/small = better words'
         required: false
-        default: 'tiny'
+        default: 'small'
         type: choice
         options: ['tiny', 'base', 'small']
       output_format:
@@ -44,7 +44,7 @@ on:
       caption_theme:
         description: 'Subtitle style'
         required: false
-        default: 'professional'
+        default: 'creator'
         type: choice
         options: ['professional', 'clean', 'shorts', 'creator', 'high-impact', 'minimal', 'classic']
 
