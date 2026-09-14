@@ -82,6 +82,13 @@ def test_returns_a_fresh_list_each_call():
     assert "-mutated" not in video_encode_args(QUALITY)
 
 
+def test_workflow_quality_overrides_are_optional(monkeypatch):
+    monkeypatch.setenv("VIDEO_CRF", "17")
+    assert video_encode_args(QUALITY_FAST)[-1] == "17"
+    monkeypatch.setenv("AUDIO_BITRATE", "160k")
+    assert ffmpeg_utils.audio_encode_args()[-1] == "160k"
+
+
 def test_metadata_scrub_covers_global_and_per_stream():
     # Global -map_metadata -1 alone leaves the audio handler_name intact on a
     # stream copy — the per-stream specifiers are what strip YouTube's

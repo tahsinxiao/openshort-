@@ -86,7 +86,7 @@ LOUDNORM_FILTER = "loudnorm=I=-14:TP=-2.0:LRA=11"
 
 def audio_encode_args():
     """AAC encode args for a delivered clip, with loudness normalisation."""
-    args = ["-c:a", "aac"]
+    args = ["-c:a", "aac", "-b:a", os.environ.get("AUDIO_BITRATE", "128k")]
     if os.environ.get("AUDIO_NORMALIZE", "1").strip() != "0":
         args = ["-af", LOUDNORM_FILTER] + args
     return args
@@ -153,4 +153,8 @@ def video_encode_args(tier=QUALITY):
         print(f"🎞️ [Encoder] video encoder: {'h264_nvenc' if use_nvenc else 'libx264'} "
               f"(FFMPEG_ENCODER={mode})")
 
-    return list((_NVENC_ARGS if use_nvenc else _X264_ARGS)[tier])
+    args = list((_NVENC_ARGS if use_nvenc else _X264_ARGS)[tier])
+    requested_crf = os.environ.get("VIDEO_CRF", "").strip()
+    if requested_crf and not use_nvenc and "-crf" in args:
+        args[args.index("-crf") + 1] = requested_crf
+    return args

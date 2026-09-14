@@ -100,6 +100,11 @@ jobs:
       GENERAL_CONTENT_HEIGHT_RATIO: 0.52
       # Add the AI's plain-text hook for the first 2.2 seconds when available.
       AUTO_HOOK: 1
+      # Explicit delivery controls make size comparisons reproducible.
+      VIDEO_CRF: 18
+      AUDIO_BITRATE: 128k
+      # Free deterministic pre-ranking runs before the provider-backed review.
+      EDITORIAL_BRAIN: 1
 
     steps:
       - name: Check out the code

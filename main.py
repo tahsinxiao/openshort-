@@ -1322,6 +1322,8 @@ def get_viral_clips(transcript_result, video_duration):
 
     try:
         windows = build_transcript_windows(transcript_result, video_duration)
+        from editorial_brain import rank_windows
+        windows = rank_windows(windows)
         print(f"   Built {len(windows)} scoring window(s).")
         costs = []
 
@@ -1330,7 +1332,10 @@ def get_viral_clips(transcript_result, video_duration):
         SCORE_BATCH = 8
         for b in range(0, len(windows), SCORE_BATCH):
             batch = windows[b:b + SCORE_BATCH]
-            payload = [{"id": w["id"], "start": w["start"], "end": w["end"], "text": w["text"]} for w in batch]
+            payload = [{"id": w["id"], "start": w["start"], "end": w["end"],
+                        "text": w["text"],
+                        "editorial_pre_score": w.get("editorial_pre_score"),
+                        "editorial_signals": w.get("editorial_signals")} for w in batch]
             prompt = gemini_worker.SCORE_PROMPT_TEMPLATE.format(
                 video_duration=video_duration, language=language,
                 windows_json=json.dumps(payload, ensure_ascii=False))
@@ -1346,11 +1351,15 @@ def get_viral_clips(transcript_result, video_duration):
         by_id = {w["id"]: w for w in windows}
         shortlist = [by_id[w["id"]] for w in scored[:target] if w.get("id") in by_id]
         if not shortlist:
-            shortlist = windows[:target]  # scoring returned nothing usable
+            shortlist = sorted(windows, key=lambda w: w.get("editorial_pre_score", 0),
+                               reverse=True)[:target]
         print(f"   Shortlisted {len(shortlist)} window(s) for detail.")
 
         # --- Pass 2: detailed clip extraction on the shortlist ---
-        payload = [{"id": w["id"], "start": w["start"], "end": w["end"], "text": w["text"]} for w in shortlist]
+        payload = [{"id": w["id"], "start": w["start"], "end": w["end"],
+                    "text": w["text"],
+                    "editorial_pre_score": w.get("editorial_pre_score"),
+                    "editorial_signals": w.get("editorial_signals")} for w in shortlist]
         min_clips, max_clips = clip_count_targets(len(shortlist))
         prompt = gemini_worker.DETAIL_PROMPT_TEMPLATE.format(
             video_duration=video_duration, language=language,
@@ -1676,6 +1685,9 @@ if __name__ == '__main__':
                         fitted_start, fitted_end, transcript, duration,
                         min_duration=min_clip_seconds,
                         max_duration=max_clip_seconds)
+                    from editorial_brain import critic_clip
+                    clip["editorial_critic"] = critic_clip(
+                        transcript, fitted_start, fitted_end)
                 clip['start'], clip['end'] = fitted_start, fitted_end
                 if (fitted_start, fitted_end) != (original_start, original_end):
                     print(f"   ✂️ Editorial boundary pass: {original_start:.2f}-{original_end:.2f}"
@@ -1742,6 +1754,8 @@ if __name__ == '__main__':
                         # Captions last, so they sit on top of the clean frame
                         # and the canonical file stays clean for re-styling.
                         auto_caption_clip(clip_final_path, transcript, start, end)
+                        from output_diagnostics import write_output_diagnostics
+                        write_output_diagnostics(clip_final_path, output_dir)
                         print(f"   ✅ Clip {i+1} ready: {clip_final_path}")
                     return success
                 finally:
