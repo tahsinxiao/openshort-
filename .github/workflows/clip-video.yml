@@ -94,9 +94,12 @@ jobs:
       MAX_CLIP_SECONDS: 180
       # Let the reframer choose crop, full-content, screen, split, or inset layout.
       AUTO_LAYOUT: 1
-      # Preserve wide visual scenes with a full-width foreground over a blurred
-      # backdrop; close-ups still use subject-aware tracking/cropping.
-      FULL_FRAME_CONTENT: 1
+      # Use a larger content-aware foreground for wide diagrams and B-roll.
+      # TRACK scenes still use face/object-aware crops and smooth motion.
+      FULL_FRAME_CONTENT: 0
+      GENERAL_CONTENT_HEIGHT_RATIO: 0.52
+      # Add the AI's plain-text hook for the first 2.2 seconds when available.
+      AUTO_HOOK: 1
 
     steps:
       - name: Check out the code

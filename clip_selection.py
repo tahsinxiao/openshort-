@@ -200,3 +200,47 @@ def snap_clip_to_words(start, end, words, video_duration,
     if new_end <= new_start or new_end - new_start < min_duration:
         return original
     return (round(new_start, 3), round(new_end, 3))
+
+
+def sentence_boundaries(transcript_result):
+    """Return likely sentence starts and ends from timestamped segments."""
+    starts, ends = [], []
+    previous_ended_sentence = True
+    for segment in transcript_result.get("segments", []):
+        text = str(segment.get("text") or "").strip()
+        if not text:
+            continue
+        start = float(segment.get("start", 0) or 0)
+        end = float(segment.get("end", start) or start)
+        if previous_ended_sentence or not starts:
+            starts.append(start)
+        if text.rstrip().endswith((".", "!", "?", "。", "！", "？")):
+            ends.append(end)
+            previous_ended_sentence = True
+        else:
+            previous_ended_sentence = False
+    if transcript_result.get("segments"):
+        last_end = float(transcript_result["segments"][-1].get("end", 0) or 0)
+        if last_end and (not ends or last_end > ends[-1]):
+            ends.append(last_end)
+    return sorted(set(starts)), sorted(set(ends))
+
+
+def snap_clip_to_sentences(start, end, transcript_result, video_duration,
+                           min_duration=15.0, max_duration=60.0,
+                           search_window=5.0):
+    """Move nearby boundaries to complete spoken thoughts without padding."""
+    starts, ends = sentence_boundaries(transcript_result)
+    original = (round(float(start), 3), round(float(end), 3))
+    new_start, new_end = float(start), float(end)
+    candidates = [x for x in starts if abs(x - new_start) <= search_window]
+    if candidates:
+        new_start = min(candidates, key=lambda x: abs(x - new_start))
+    candidates = [x for x in ends if abs(x - new_end) <= search_window]
+    if candidates:
+        new_end = min(candidates, key=lambda x: abs(x - new_end))
+    new_start = max(0.0, min(new_start, float(video_duration)))
+    new_end = max(new_start, min(new_end, float(video_duration)))
+    if new_end - new_start < float(min_duration) or new_end - new_start > float(max_duration):
+        return original
+    return round(new_start, 3), round(new_end, 3)

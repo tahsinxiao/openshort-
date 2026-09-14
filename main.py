@@ -25,7 +25,8 @@ from google.genai import types as genai_types
 import gemini_worker
 import ai_gateway
 import layout_picker
-from clip_selection import build_transcript_windows, clip_count_targets, snap_clip_to_words
+from clip_selection import (build_transcript_windows, clip_count_targets,
+                            snap_clip_to_words, snap_clip_to_sentences)
 from ffmpeg_utils import (video_encode_args, audio_encode_args, QUALITY,
                           QUALITY_FAST, METADATA_SCRUB)
 from dotenv import load_dotenv
@@ -39,6 +40,22 @@ load_dotenv()
 
 # --- Constants ---
 ASPECT_RATIO = 9 / 16
+
+
+def _compact_transcript_words(transcript):
+    """Adapt faster-whisper word objects to clip_selection's compact shape."""
+    words = []
+    for segment in (transcript or {}).get("segments", []):
+        for word in segment.get("words", []):
+            text = str(word.get("word") or "").strip()
+            if not text:
+                continue
+            words.append({
+                "w": text,
+                "s": float(word.get("start", 0) or 0),
+                "e": float(word.get("end", 0) or 0),
+            })
+    return words
 
 GEMINI_PROMPT_TEMPLATE = """
 You are a senior short-form video editor. Read the ENTIRE transcript and word-level timestamps to choose EXACTLY TWO MOST VIRAL moments for TikTok/IG Reels/YouTube Shorts. For videos at least 120 seconds long, each clip must be between 59 and 60 seconds long.
@@ -73,7 +90,7 @@ OUTPUT — RETURN ONLY VALID JSON (no markdown, no comments). Order clips by pre
       "video_description_for_tiktok": "<description for TikTok oriented to get views>",
       "video_description_for_instagram": "<description for Instagram oriented to get views>",
       "video_title_for_youtube_short": "<title for YouTube Short oriented to get views 100 chars max>",
-      "viral_hook_text": "<SHORT punchy text overlay (max 10 words). MUST BE IN THE SAME LANGUAGE AS THE VIDEO TRANSCRIPT. Examples: 'POV: You realized...', 'Did you know?', 'Stop doing this!'>"
+      "viral_hook_text": "<SHORT plain-text overlay (max 10 words). MUST BE IN THE SAME LANGUAGE AS THE VIDEO TRANSCRIPT. Use normal words and punctuation only.>"
     }}
   ]
 }}
@@ -1352,6 +1369,9 @@ def get_viral_clips(transcript_result, video_duration):
             ns, ne = snap_clip_to_words(
                 s.get("start", 0), s.get("end", 0), words, video_duration,
                 min_duration=min_seconds, max_duration=max_seconds)
+            ns, ne = snap_clip_to_sentences(
+                ns, ne, transcript_result, video_duration,
+                min_duration=min_seconds, max_duration=max_seconds)
             s["start"], s["end"] = _fit_clip_duration(
                 ns, ne, video_duration, min_seconds=min_seconds,
                 max_seconds=max_seconds)
@@ -1646,6 +1666,16 @@ if __name__ == '__main__':
                 fitted_start, fitted_end = _fit_clip_duration(
                     snapped_start, snapped_end, duration,
                     min_seconds=min_clip_seconds, max_seconds=max_clip_seconds)
+                if transcript is not None:
+                    compact = _compact_transcript_words(transcript)
+                    fitted_start, fitted_end = snap_clip_to_words(
+                        fitted_start, fitted_end, compact, duration,
+                        min_duration=min_clip_seconds,
+                        max_duration=max_clip_seconds)
+                    fitted_start, fitted_end = snap_clip_to_sentences(
+                        fitted_start, fitted_end, transcript, duration,
+                        min_duration=min_clip_seconds,
+                        max_duration=max_clip_seconds)
                 clip['start'], clip['end'] = fitted_start, fitted_end
                 if (fitted_start, fitted_end) != (original_start, original_end):
                     print(f"   ✂️ Editorial boundary pass: {original_start:.2f}-{original_end:.2f}"
@@ -1696,6 +1726,19 @@ if __name__ == '__main__':
 
                     success = render_clip(clip_temp_path, clip_final_path, output_format)
                     if success:
+                        hook_text = str(clip.get('viral_hook_text') or '').strip()
+                        if os.environ.get('AUTO_HOOK', '0').strip().lower() in ('1', 'true', 'yes') and hook_text:
+                            from subtitles import sanitize_caption_text
+                            clean_hook = sanitize_caption_text(hook_text)
+                            if clean_hook:
+                                import hooks as _hooks
+                                hooked_path = os.path.join(
+                                    output_dir, f"hooked_{uuid.uuid4().hex[:8]}_{clip_filename}")
+                                _hooks.add_hook_to_video(
+                                    clip_final_path, clean_hook, hooked_path,
+                                    position='top', font_scale=0.72,
+                                    duration=2.2, style='classic')
+                                os.replace(hooked_path, clip_final_path)
                         # Captions last, so they sit on top of the clean frame
                         # and the canonical file stays clean for re-styling.
                         auto_caption_clip(clip_final_path, transcript, start, end)

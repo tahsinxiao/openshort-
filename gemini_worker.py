@@ -255,6 +255,9 @@ CLIP RULES:
   2 seconds would not stop a cold viewer from scrolling, move the start or skip the clip.
 - Start slightly before the hook and end slightly after the payoff when possible.
 - Do not cut in the middle of a word or phrase.
+- Prefer a complete sentence at both ends. Never open or close on a dangling
+  conjunction, pronoun, or unfinished thought when a nearby complete sentence
+  is available.
 - No generic intros/outros unless they are the hook.
 - STANDS ALONE: the clip must make sense to someone who has seen nothing else.
   If it opens on a pronoun, a "that", a "so anyway", or an answer whose question
@@ -289,6 +292,8 @@ COPY RULES — ALL text fields (descriptions, title, hook) MUST be written in TR
 - `predicted_score`: honest 0-100 estimate of viral potential. Prefer clips
   scoring 70+; if neither candidate reaches 70, return the two strongest options
   and explain the tradeoff in the description.
+- `viral_hook_text` must contain plain words and normal punctuation only. Do not
+  use emoji, decorative symbols, or symbol-only emphasis.
 
 TRANSCRIPT_LANGUAGE: {language}
 VIDEO_DURATION_SECONDS: {video_duration}

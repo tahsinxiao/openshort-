@@ -7,6 +7,7 @@ from clip_selection import (
     build_transcript_windows,
     clip_count_targets,
     snap_clip_to_words,
+    snap_clip_to_sentences,
     compact_words,
     lookup_model_prices,
 )
@@ -84,6 +85,26 @@ class TestSnapClipToWords:
         words = self._words()
         start, end = snap_clip_to_words(0.0, 59.9, words, 80.0)
         assert end - start <= 60.0
+
+
+class TestSnapClipToSentences:
+    def test_nearby_boundaries_move_to_complete_thoughts(self):
+        transcript = {"segments": [
+            _seg(0, 12, "This is the opening."),
+            _seg(12, 28, "Here is the important explanation."),
+            _seg(28, 45, "And this is the payoff."),
+        ]}
+        start, end = snap_clip_to_sentences(
+            13.5, 43.0, transcript, 60, min_duration=15, max_duration=60)
+        assert start == 12.0
+        assert end == 45.0
+
+    def test_does_not_break_duration_contract(self):
+        transcript = {"segments": [
+            _seg(0, 3, "Short."), _seg(3, 8, "Another short."),
+        ]}
+        assert snap_clip_to_sentences(1, 7, transcript, 10,
+                                      min_duration=15, max_duration=60) == (1.0, 7.0)
 
 
 class TestPricing:

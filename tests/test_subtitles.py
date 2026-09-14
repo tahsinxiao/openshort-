@@ -79,8 +79,16 @@ class TestStyleSanitizing:
         assert style["highlight_color"] == "#B7FF3C"
         assert style["effect"] == "pop"
         assert style["uppercase"] is True
-        assert style["max_chars"] == 22
+        assert style["max_chars"] == 24
         assert style["max_duration"] == 1.6
+
+    def test_caption_text_removes_emoji_and_decorative_symbols(self):
+        from subtitles import sanitize_caption_text
+        assert sanitize_caption_text("This matters 🔥 ★") == "This matters"
+
+    def test_creator_theme_is_smaller(self):
+        from subtitles import caption_theme
+        assert caption_theme("creator")["font_size"] == 24
 
     def test_invalid_hex_falls_back_to_white(self):
         assert hex_to_ass_color("#GGGGGG") == hex_to_ass_color("#FFFFFF")

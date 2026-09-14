@@ -2,6 +2,7 @@ import os
 import re
 import subprocess
 import sys
+import unicodedata
 
 from ffmpeg_utils import video_encode_args, QUALITY, METADATA_SCRUB
 
@@ -105,7 +106,17 @@ def _escape_ffmpeg_filter_value(value):
 
 
 def _normalize_subtitle_word(value):
-    return " ".join(str(value or "").split())
+    text = " ".join(str(value or "").split())
+    # Captions should carry the spoken words, not decorative emoji or symbol
+    # glyphs that render inconsistently across mobile players and fonts.
+    text = "".join(ch for ch in text
+                    if not unicodedata.category(ch).startswith(("So", "Sk", "Sm")))
+    return " ".join(text.split())
+
+
+def sanitize_caption_text(value):
+    """Remove emoji/decorative symbols while preserving normal punctuation."""
+    return _normalize_subtitle_word(value)
 
 
 def transcribe_audio(video_path):
@@ -221,7 +232,7 @@ def generate_srt(transcript, clip_start, clip_end, output_path, max_chars=20, ma
 # and Reels' own bottom UI — the caption/username block and the music ticker —
 # where they were partly covered on the platform even though the exported file
 # looked fine.
-SAFE_MARGIN_V = 52
+SAFE_MARGIN_V = 68
 
 
 # The caption look applied automatically to every generated clip. Chosen by
@@ -288,7 +299,7 @@ CAPTION_THEMES = {
         # lagging behind it on fast speech.
         "font_name": "Anton", "highlight_color": "#B7FF3C",
         "border_width": 4, "effect": "pop", "base_opacity": 1.0,
-        "uppercase": True, "font_size": 30, "max_chars": 22,
+        "uppercase": True, "font_size": 24, "max_chars": 24,
         "max_duration": 1.6,
     },
     "high-impact": {
