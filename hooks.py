@@ -157,6 +157,17 @@ HOOK_STYLES = {
 }
 
 
+def hook_overlay_y(video_height, position="top"):
+    """Return the vertical anchor for the generated hook card."""
+    if position == "center":
+        return int(video_height / 2)
+    if position == "bottom":
+        return int(video_height * 0.70)
+    ratio = float(os.environ.get("HOOK_TOP_RATIO", "0.14"))
+    ratio = max(0.08, min(ratio, 0.24))
+    return int(video_height * ratio)
+
+
 def create_hook_image(text, target_width, output_image_path="hook_overlay.png", font_scale=1.0, style="classic"):
     """
     Generates a hook overlay image using pixel-based wrapping.
@@ -366,12 +377,9 @@ def add_hook_to_video(video_path, text, output_path, position="top", font_scale=
         
         if position == "center":
             overlay_y = (video_height - box_h) // 2
-        elif position == "bottom":
-             # Bottom 20% mark (approx)
-             overlay_y = int(video_height * 0.70)
         else:
-             # Top 20% mark
-             overlay_y = int(video_height * 0.20)
+            # Keep the hook in the upper safe zone, above the karaoke line.
+            overlay_y = hook_overlay_y(video_height, position)
         
         # 4. FFmpeg Command
         print(f"🎬 Overlaying hook: '{text}' at {overlay_x},{overlay_y}")

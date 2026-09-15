@@ -97,9 +97,10 @@ jobs:
       # Use a larger content-aware foreground for wide diagrams and B-roll.
       # TRACK scenes still use face/object-aware crops and smooth motion.
       FULL_FRAME_CONTENT: 0
-      GENERAL_CONTENT_HEIGHT_RATIO: 0.52
+      GENERAL_CONTENT_HEIGHT_RATIO: 0.58
       # Add the AI's plain-text hook for the first 2.2 seconds when available.
       AUTO_HOOK: 1
+      HOOK_TOP_RATIO: 0.14
       # Explicit delivery controls make size comparisons reproducible.
       VIDEO_CRF: 18
       AUDIO_BITRATE: 128k

@@ -1,7 +1,7 @@
 """Tests for hook overlay text handling (emoji runs, long-word wrapping)."""
 from PIL import Image, ImageDraw, ImageFont
 
-from hooks import _split_emoji_runs, _break_long_word, _EMOJI_RE
+from hooks import _split_emoji_runs, _break_long_word, _EMOJI_RE, hook_overlay_y
 
 
 def _draw_and_font():
@@ -42,3 +42,13 @@ class TestLongWordWrap:
     def test_short_word_single_piece(self):
         draw, font = _draw_and_font()
         assert _break_long_word(draw, "kurz", font, None, 1000) == ["kurz"]
+
+
+class TestHookPlacement:
+    def test_default_hook_is_in_upper_safe_zone(self, monkeypatch):
+        monkeypatch.delenv("HOOK_TOP_RATIO", raising=False)
+        assert hook_overlay_y(1920) == 268
+
+    def test_hook_ratio_is_clamped(self, monkeypatch):
+        monkeypatch.setenv("HOOK_TOP_RATIO", "0.99")
+        assert hook_overlay_y(1920) == 460
