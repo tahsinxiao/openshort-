@@ -671,7 +671,7 @@ def download_youtube_video(url, output_dir="."):
     hd_args = pot_args
     fallback_args = {
         'youtube': {
-            'player_client': ['tv_embed', 'android', 'mweb', 'web'],
+            'player_client': ['web_embedded', 'tv_embed', 'android', 'mweb', 'web'],
             'player_skip': ['webpage', 'configs'],
             # Auto-fetch the account's Data Sync ID from the cookies so the
             # mweb/web clients can mint GVS PO tokens — without it YouTube
@@ -702,10 +702,12 @@ def download_youtube_video(url, output_dir="."):
     fallback_fmt = 'bestvideo[height<=2160][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=2160]+bestaudio/best[height<=2160][ext=mp4]/best[height<=2160]/best'
 
     def _base_opts(extractor_args, proxy):
+        ytdlp_retries = max(1, int(os.environ.get("YTDLP_RETRIES", "3")))
         return {
             'quiet': False, 'verbose': True, 'no_warnings': False,
             'cookiefile': cookies_path if cookies_path else None,
-            'proxy': proxy, 'socket_timeout': 30, 'retries': 10, 'fragment_retries': 10,
+            'proxy': proxy, 'socket_timeout': 30, 'retries': ytdlp_retries,
+            'fragment_retries': max(2, ytdlp_retries),
             'nocheckcertificate': True, 'cachedir': False,
             # Impersonate a real Chrome browser — fixes "Sign in to confirm you're
             # not a bot" (YouTube) and 403 (Kick). Needs curl_cffi. Must be an
@@ -789,11 +791,21 @@ def download_youtube_video(url, output_dir="."):
 
     if sanitized_title is None:
         import sys
+        last_text = str(last_err or "")
+        if "Sign in to confirm" in last_text or "not a bot" in last_text:
+            reason = (
+                "YouTube rejected the GitHub runner as an automated client. "
+                "Refresh YOUTUBE_COOKIES from a currently signed-in browser and "
+                "set PROXY_URL to a working residential/home-IP proxy if the "
+                "runner IP remains blocked."
+            )
+        else:
+            reason = "YouTube blocked the request or the download tooling is out of date."
         error_msg = f"""
 ❌ ================================================================= ❌
 ❌ FATAL ERROR: YOUTUBE DOWNLOAD FAILED (all strategies)
 ❌ ================================================================= ❌
-REASON: YouTube blocked the request or the download tooling is out of date.
+REASON: {reason}
 👇 SOLUTION FOR USER: download the video manually and use the 'Upload Video' tab.
 Technical Details: {str(last_err)}
 """

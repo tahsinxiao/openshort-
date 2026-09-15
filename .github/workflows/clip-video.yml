@@ -69,6 +69,8 @@ jobs:
       # them YouTube blocks GitHub's datacenter IPs with "Sign in to confirm
       # you're not a bot". Add as a repo secret named YOUTUBE_COOKIES.
       YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+      # Avoid spending several minutes retrying the same bot challenge.
+      YTDLP_RETRIES: 3
       # OPTIONAL but RECOMMENDED for reliability: the phone-tunnel URL (e.g.
       # https://xxx.trycloudflare.com). When set, the download goes through
       # your phone's home IP, so YouTube never sees the Azure datacenter IP
