@@ -1761,7 +1761,9 @@ if __name__ == '__main__':
                                 _hooks.add_hook_to_video(
                                     clip_final_path, clean_hook, hooked_path,
                                     position='top', font_scale=0.72,
-                                    duration=2.2, style='classic')
+                                    duration=max(2.2, min(6.0, float(
+                                        os.environ.get('HOOK_DURATION', '4.5')))),
+                                    style='classic')
                                 os.replace(hooked_path, clip_final_path)
                         # Captions last, so they sit on top of the clean frame
                         # and the canonical file stays clean for re-styling.
