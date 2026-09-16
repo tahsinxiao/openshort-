@@ -107,8 +107,16 @@ jobs:
       # Explicit delivery controls make size comparisons reproducible.
       VIDEO_CRF: 17
       AUDIO_BITRATE: 128k
+      # 2K portrait delivery (1440x2560). This is a clean upscale, not AI
+      # hallucination; it improves platform delivery size but cannot recreate
+      # detail absent from a 1080p source.
+      DELIVERY_MIN_WIDTH: 1440
+      DELIVERY_SCALE_FLAGS: lanczos
       # Free deterministic pre-ranking runs before the provider-backed review.
       EDITORIAL_BRAIN: 1
+      # One small multimodal still-frame critic per daily run; timing remains
+      # transcript-driven and the review is metadata-only if it fails.
+      AI_SCENE_REVIEW: 1
 
     steps:
       - name: Check out the code

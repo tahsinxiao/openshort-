@@ -29,6 +29,12 @@ import split_layout
 from ffmpeg_utils import video_encode_args, QUALITY_FAST, METADATA_SCRUB
 
 ANALYSIS_MAX_WIDTH = 640
+SCALE_FLAGS = os.environ.get("DELIVERY_SCALE_FLAGS", "").strip()
+
+
+def _scale(width, height):
+    suffix = f":flags={SCALE_FLAGS}" if SCALE_FLAGS else ""
+    return f"scale={width}:{height}{suffix}"
 
 
 # Short-form platforms (TikTok / Reels / Shorts) expect a 1080-wide vertical
@@ -55,8 +61,9 @@ def delivery_size(orig_w, orig_h, aspect_ratio):
         out_w = orig_w
         out_h = int(out_w / aspect_ratio)
 
-    if out_w < DELIVERY_MIN_WIDTH:
-        out_w = DELIVERY_MIN_WIDTH
+    requested_width = int(os.environ.get("DELIVERY_MIN_WIDTH", DELIVERY_MIN_WIDTH))
+    if out_w < requested_width:
+        out_w = requested_width
         out_h = int(round(out_w / aspect_ratio))
 
     return out_w + (out_w % 2), out_h + (out_h % 2)
@@ -136,7 +143,7 @@ def general_filtergraph(out_w, out_h, content_h=None):
     return (
         f"[0:v]split=2[bga][fga];"
         f"[bga]scale=-2:{out_h},crop=w=min(iw\\,{out_w}):h={out_h},"
-        f"scale={out_w}:{out_h},gblur=sigma=12[bg];"
+        f"{_scale(out_w, out_h)},gblur=sigma=12[bg];"
         # Scale by HEIGHT, then trim any overflow to the output width. crop
         # centres by default, and min() makes it a no-op when the scaled source
         # is already narrower than the frame (portrait/square sources).
@@ -425,7 +432,7 @@ def render(input_video, final_output_video, aspect_ratio, content_ranges=None):
                 graph = (
                     f"[0:v]sendcmd=f='{cmd_path}',"
                     f"crop@c={init},"
-                    f"scale={out_w}:{out_h},setsar=1[v]"
+                    f"{_scale(out_w, out_h)},setsar=1[v]"
                 )
 
             _run([

@@ -1714,6 +1714,25 @@ if __name__ == '__main__':
         else:
             print(f"🔥 Found {len(clips_data['shorts'])} clips!")
 
+            # Optional multimodal critic: transcript selection remains the source
+            # of timing, while a few stills check visual readability and crop
+            # safety. It is free when the configured OpenRouter model is free and
+            # never blocks a successful transcript-driven run.
+            if os.environ.get("AI_SCENE_REVIEW", "0").strip().lower() in ("1", "true", "yes"):
+                try:
+                    from scene_analyzer import review as review_scenes
+                    visual_rows = review_scenes(input_video, clips_data["shorts"])
+                    for row in visual_rows:
+                        idx = int(row.get("candidate_id", -1))
+                        if 0 <= idx < len(clips_data["shorts"]):
+                            clips_data["shorts"][idx]["visual_review"] = {
+                                "visual_quality": max(0, min(100, int(row.get("visual_quality", 0)))),
+                                "reason": str(row.get("reason", ""))[:160],
+                            }
+                    print(f"   👁️ Visual scene review: {len(visual_rows)} candidate(s).")
+                except Exception as visual_error:
+                    print(f"   ⚠️ Visual scene review skipped ({visual_error}).")
+
             # Save metadata. Silent videos have no transcript → no subtitles,
             # which is correct (there's no speech to caption).
             clips_data['transcript'] = transcript or {"language": "none", "segments": []}
