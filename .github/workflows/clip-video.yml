@@ -96,10 +96,11 @@ jobs:
       MAX_CLIP_SECONDS: 180
       # Let the reframer choose crop, full-content, screen, split, or inset layout.
       AUTO_LAYOUT: 1
-      # Use a larger content-aware foreground for wide diagrams and B-roll.
+      # Preserve the full source width for educational graphics and diagrams;
       # TRACK scenes still use face/object-aware crops and smooth motion.
-      FULL_FRAME_CONTENT: 0
-      GENERAL_CONTENT_HEIGHT_RATIO: 0.58
+      # This avoids cutting labels and planetary edges out of wide scenes.
+      FULL_FRAME_CONTENT: 1
+      GENERAL_CONTENT_HEIGHT_RATIO: 0.42
       # Add the AI's plain-text hook for the first 2.2 seconds when available.
       AUTO_HOOK: 1
       HOOK_TOP_RATIO: 0.14
