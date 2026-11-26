@@ -671,7 +671,10 @@ def download_youtube_video(url, output_dir="."):
     hd_args = pot_args
     fallback_args = {
         'youtube': {
-            'player_client': ['web_embedded', 'tv_embed', 'android', 'mweb', 'web'],
+            # Current YouTube clients. tv_embed is obsolete, android cannot
+            # use account cookies, and web is increasingly SABR-only. mweb is
+            # the current PO-token path; web_safari provides an HLS fallback.
+            'player_client': ['mweb', 'web_safari', 'tv', 'android_vr', 'web_embedded'],
             'player_skip': ['webpage', 'configs'],
             # Auto-fetch the account's Data Sync ID from the cookies so the
             # mweb/web clients can mint GVS PO tokens — without it YouTube
@@ -782,7 +785,12 @@ def download_youtube_video(url, output_dir="."):
             except Exception as e:
                 last_err = e
                 print(f"⚠️  Download attempt '{label}' failed: {str(e)[:200]}")
-                retryable = '403' in str(e) or 'Forbidden' in str(e)
+                error_text = str(e).lower()
+                retryable = any(token in error_text for token in (
+                    '403', 'forbidden', 'page needs to be reloaded',
+                    'failed to extract any player response',
+                    'temporarily unavailable', 'please try again',
+                ))
                 if not retryable or retry == 1:
                     break
                 time.sleep(3)
@@ -798,6 +806,14 @@ def download_youtube_video(url, output_dir="."):
                 "Refresh YOUTUBE_COOKIES from a currently signed-in browser and "
                 "set PROXY_URL to a working residential/home-IP proxy if the "
                 "runner IP remains blocked."
+            )
+        elif any(token in last_text.lower() for token in (
+                "login_required", "this video is unavailable",
+                "video unavailable", "private video")):
+            reason = (
+                "YouTube returned LOGIN_REQUIRED or unavailable for the selected "
+                "client. This can be caused by a restricted/private video, stale "
+                "account cookies, or a YouTube client-policy change."
             )
         else:
             reason = "YouTube blocked the request or the download tooling is out of date."

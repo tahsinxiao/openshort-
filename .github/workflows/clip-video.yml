@@ -155,7 +155,10 @@ jobs:
       - name: Install the app + impersonation support
         run: |
           pip install -r requirements.txt
-          pip install -U "yt-dlp[default]==2026.8.19" "curl_cffi==0.12.0" "bgutil-ytdlp-pot-provider==1.3.2"
+          # Keep yt-dlp current: YouTube's player/SABR policies change often,
+          # and the old 2026.8.19 pin began returning LOGIN_REQUIRED,
+          # UNPLAYABLE, and "page needs to be reloaded" in November.
+          pip install -U "yt-dlp[default]==2026.11.23" "curl_cffi==0.12.0" "bgutil-ytdlp-pot-provider==1.3.2"
 
       - name: Install Deno (YouTube needs it for JS challenges / PO tokens)
         run: |
